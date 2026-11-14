@@ -30,6 +30,8 @@ def template_dir() -> Path:
     d = _template_dir()
     if not d.is_dir():
         pytest.skip(f"template directory not found: {d} (set LTP3_TEMPLATE_DIR)")
+    if not any(d.glob("*.ltp3t")):
+        pytest.skip(f"no .ltp3t files in {d}")
     return d
 
 

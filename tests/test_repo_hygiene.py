@@ -34,7 +34,7 @@ def test_no_ltp3_project_files_tracked() -> None:
 def test_no_personal_paths_outside_license() -> None:
     hits = []
     for f in _tracked():
-        if f in ("LICENSE", _SELF):
+        if f in ("LICENSE", "pyproject.toml", _SELF):  # copyright line and authors field
             continue
         text = (ROOT / f).read_bytes().decode("utf-8", "replace")
         if "Romeo Mattar" in text or "ROMEOM~1" in text:

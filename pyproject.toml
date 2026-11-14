@@ -5,13 +5,35 @@ build-backend = "hatchling.build"
 [project]
 name = "ltp3-mcp"
 version = "0.1.0"
-description = "Lossless reader/writer, solver and MCP server for LTpowerPlanner III power-tree files"
+description = "MCP server and Python library for Analog Devices LTpowerPlanner III power-tree files: lossless reader/writer, solver, validator and safe editor"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
+authors = [{ name = "Romeo Mattar" }]
+keywords = ["mcp", "model-context-protocol", "ltpowerplanner", "power-tree", "power-supply", "analog-devices", "ltp3", "eda"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Typing :: Typed",
+]
 # 3.11 is the floor of the pinned dev tools (hypothesis 6.170.15); the MCP SDK itself allows 3.10
 requires-python = ">=3.11"
 dependencies = ["mcp==2.3.0"]
+
+[project.urls]
+Homepage = "https://github.com/RomeoCoding/ltp3-mcp"
+Repository = "https://github.com/RomeoCoding/ltp3-mcp"
+Issues = "https://github.com/RomeoCoding/ltp3-mcp/issues"
+Changelog = "https://github.com/RomeoCoding/ltp3-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 ltp3-mcp = "ltp3.server:main"
@@ -30,6 +52,9 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ltp3"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/ltp3", "LICENSE", "README.md", "CHANGELOG.md", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

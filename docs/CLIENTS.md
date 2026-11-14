@@ -33,8 +33,8 @@ Edit `%APPDATA%\Claude\claude_desktop_config.json` and restart Claude Desktop:
   "mcpServers": {
     "ltp3": {
       "command": "uv",
-      "args": ["run", "--directory", "C:\path\to\ltp3-mcp", "ltp3-mcp"],
-      "env": { "LTP3_ALLOWED_DIRS": "C:\work\power-trees" }
+      "args": ["run", "--directory", "C:\\path\\to\\ltp3-mcp", "ltp3-mcp"],
+      "env": { "LTP3_ALLOWED_DIRS": "C:\\work\\power-trees" }
     }
   }
 }

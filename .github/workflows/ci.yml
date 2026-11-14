@@ -15,3 +15,4 @@ jobs:
       - run: uv run mypy --strict src
       # corpus tests skip here by design: the factory templates are not redistributable
       - run: uv run pytest -q
+      - run: uv build
