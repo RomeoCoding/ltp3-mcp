@@ -20,3 +20,20 @@ Our solver on `samples/O1_ldo.ltp3` (tab 1 = A7, tab 2 = O1) reproduces both row
 The app trims trailing zeros in the summary (72 %, not 72.00 %).
 
 Pending: O3 (resistor), O4 (Ipeak vs Inom), O6 (default efficiency), T1 (AD4000 template).
+
+## GUI defaults (fresh parts, LTpowerPlanner III v3.6.8, screenshots 2026-11-14)
+These are presumed to be the values used when a key is missing. That still needs confirming against older templates (v3.0.3-3.5.4), where defaults may differ.
+
+| Part | Defaults |
+|---|---|
+| Power | VoutMin 2, **Vout (Typ) 12**, VoutMax 15 V; IoutMax 15 A. A radio button picks Min / **Typ** / Max as the voltage used |
+| Converter | VinMin 4.5, VinMax 20 V; Frequency empty; Topology All; Converter Type All. Output 1: **Vout 2 V**, IoutMax 15 A, VoutMin 0.6, VoutMax 15 V; efficiency mode "Manually Enter Efficiency"; a radio button picks **Eff Nom 90 %** or Eff Peak 95 % |
+| LDO | VinMin 0.8, VinMax 20 V; **Ignd 0 mA**. Output 1: **Vout 1 V**, IoutMax 5 A, IoutMin 0.1 A, VoutMin 0.6, VoutMax 15 V, **Vdropout 0.2 V** |
+| Resistor | **Resistance 0 Ω**; VinMin 0.1, VinMax 500 V; PLossMax 2 W |
+| Load | INominal 10 A, **IPeak 15 A**, unit A. A radio button picks INominal or **IPeak** as the current used (default IPeak) |
+
+Implications:
+- `PeakEff` being present does not mean the peak model is used; the efficiency radio decides. A missing `NomEff` means 90 %.
+- Peak vs nominal load current (H5) is decided by the load's radio button. Its key is still unknown (candidate: `LoadType`, 712 occurrences). O4 = toggle the radio, save, diff.
+- Power voltage depends on the radio. A source with only VoutMin/VoutMax has Typ = the 12 V default unless the radio picks Min or Max.
+- A missing `Resstnce` means 0 Ω, not "blocked".
