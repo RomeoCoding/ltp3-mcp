@@ -85,3 +85,11 @@ templates with a blocked tab and 70 have only complete tabs (`docs/deviations/P9
 
 H6 and rounding (O5), H8 (O12), H15 (O8), H16 (O7). `EffType : True` = peak (one corpus use).
 Min/Max power-voltage radio (no key found). `IpeakU` (A-UNIT-EXP-PEAK).
+
+## `<ORal>` header cross-check: classification of disagreements (QA round 2, 2026-11-14)
+Every one of the 70 templates that solve completely but whose `<ORal>` header disagreed with `format_oral` was classified by hand:
+- 53: the header writes a unit string like `5.5AmA` where we write `5.5mA`
+- 14: the header is cut off at 98 characters, and our output starts with exactly that text, across tab boundaries
+- 2: the header ignores `IpeakU` (writes `50A` for 50 mA)
+- 1: the resistor default (a missing `Resstnce` is 1 mΩ, not 0). Now fixed: agreement went from 176 to 177/261
+- 0 were solver errors, and 0 were stale headers
