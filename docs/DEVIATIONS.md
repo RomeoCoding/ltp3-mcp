@@ -19,3 +19,24 @@ Each entry: what the plan said, what was done, why.
    `test_roundtrip_samples` needs both and P1 does not own `conftest.py`.
 6. No git identity is configured on this machine; commits were made with
    `-c user.name=Claude -c user.email=noreply@anthropic.com`, not written to any git config.
+
+## P1
+
+1. Census: FORMAT.md section 1 gives 25,459 tag lines; the parser finds 25,460. The difference is
+   `<Vers>` in the BOM file (`Power Tree for LT1210.ltp3t`), which a `^<` count misses because the
+   BOM precedes the `<`. PLAN.md's census list does not include the total; `test_census` asserts
+   25,460 with that explanation. All numbers PLAN.md does list match exactly.
+2. The `corpus` marker is applied only to `test_roundtrip_corpus`. `-k corpus` also matches marker
+   names, so marking `test_census` (or renaming tests to contain "corpus") would make the acceptance
+   command select more than the 261 per-template tests.
+3. `lossless.py` also exposes `Block`, `Document.blocks()`, `Document.split_tabs()` and
+   `split_args()` (PLAN.md 2.1 describes the grouping and split rules but lists no names). Split
+   arities used: Tabs 3, Summ 5, BPrt 5, Term 2, Wire 2, Symb 6 (`a,b` and `c,d` are single fields);
+   all 25,460-line corpus tag lines of these types split cleanly. `Term` attachment to `BPrt` is left
+   to P2's `model.py`.
+4. `numfmt.parse` is imported as `parse_number` in tests only to avoid clashing with
+   `lossless.parse`; the module function keeps the plan's name `parse`. `fmt` also accepts `int`.
+5. Numeric round-trip check: of 46,783 non-text-key values matching a plain numeric pattern,
+   0 fail `fmt(parse(v)) == v` (threshold was 99.9 %).
+6. Non-UTF-8 input is decoded as `cp1252` with `errors="surrogateescape"` so the four byte values
+   cp1252 leaves undefined still round-trip (plain `cp1252` would raise).

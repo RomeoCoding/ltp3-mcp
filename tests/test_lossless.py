@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+
+from ltp3 import errors
+from ltp3.errors import Ltp3Error
 from ltp3.lossless import (
     Block,
     Document,
@@ -18,9 +21,6 @@ from ltp3.lossless import (
     serialize,
     split_args,
 )
-
-from ltp3 import errors
-from ltp3.errors import Ltp3Error
 from ltp3.paths import template_dir
 
 CRLF = "\r\n"
@@ -70,7 +70,8 @@ def test_census(template_paths: list[Path]) -> None:
         lone_cr_files += file_cr > 0
     expected = {"Symb": 7364, "Term": 5891, "Wire": 4253, "BPrt": 3904, "Tabs": 444, "Summ": 444}
     assert {k: tags[k] for k in expected} == expected
-    assert n_tag_lines == 25_459
+    # FORMAT.md says 25,459: that count missed the BOM file first <Vers> (BOM precedes the "<")
+    assert n_tag_lines == 25_460
     assert n_props == 79_556
     assert n_raw == 0
     assert n_bom == 1
