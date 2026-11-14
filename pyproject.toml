@@ -15,6 +15,7 @@ dependencies = ["mcp==2.3.0"]
 
 [project.scripts]
 ltp3-mcp = "ltp3.server:main"
+ltp3 = "ltp3.cli:main_entry"
 
 [dependency-groups]
 dev = [

@@ -13,7 +13,9 @@ _SELF = "tests/test_repo_hygiene.py"
 
 def _tracked() -> list[str]:
     try:
-        r = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True)
+        r = subprocess.run(
+            ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+        )
     except (OSError, subprocess.CalledProcessError):
         pytest.skip("not a git checkout")
     return r.stdout.splitlines()
