@@ -145,10 +145,41 @@ def test_h5_current_modes() -> None:
     auto = run(tab)
     assert (peak.totals.pin_w, peak.totals.pout_w) == (pytest.approx(3.75), pytest.approx(3.0))
     assert (nom.totals.pin_w, nom.totals.pout_w) == (pytest.approx(1.25), pytest.approx(1.0))
-    assert auto.totals.pin_w == pytest.approx(3.75)  # auto = peak
-    assert "A-CURRENT-MODE" in codes(auto)
-    assert "A-CURRENT-MODE" not in codes(peak)  # explicit choice needs no flag
+    assert auto.totals.pin_w == pytest.approx(3.75)  # radio absent = the GUI default, IPeak
+    assert "A-CURRENT-MODE" not in codes(auto)
+    assert "A-CURRENT-MODE" not in codes(peak)
     assert "A-CURRENT-PEAK-ONLY" not in codes(auto)
+
+
+def test_h5_load_type_false_selects_nominal() -> None:
+    # oracle O4: IPeak (default) writes no LoadType, INominal writes `LoadType : False`
+    tab = chain_5v_buck_load(Ipeak="3", Inom="1", LoadType="False")
+    auto = run(tab)
+    assert auto.totals.pout_w == pytest.approx(1.0)
+    assert "A-CURRENT-MODE" not in codes(auto)  # confirmed, so not flagged
+    assert run(tab, current_mode="peak").totals.pout_w == pytest.approx(3.0)
+    assert run(tab, current_mode="nominal").totals.pout_w == pytest.approx(1.0)
+
+
+def test_oracle_o4_radio_files() -> None:
+    fresh = _sample_tab("O4_radio.ltp3", 4)
+    nominal = _sample_tab("O4_radio.ltp3", 5)
+    pf = next(p for p in fresh.parts if p.type == "Load").terminals[0].props
+    pn = next(p for p in nominal.parts if p.type == "Load").terminals[0].props
+    assert "LoadType" not in pf and pn["LoadType"] == "False"
+
+
+def test_load_current_defaults() -> None:
+    # radio = IPeak, Ipeak omitted: the GUI default is 15 A
+    res = run(chain_5v_buck_load(Inom="1"))
+    assert res.complete
+    assert res.totals.pout_w == pytest.approx(15.0)
+    note = next(a for a in res.assumptions if a.code == "A-DEFAULT" and "Ipeak" in a.message)
+    assert note.parts == [3]
+    # radio = INominal, Inom omitted: 10 A
+    res = run(chain_5v_buck_load(Ipeak="1", LoadType="False"))
+    assert res.totals.pout_w == pytest.approx(10.0)
+    assert any(a.code == "A-DEFAULT" and "Inom" in a.message for a in res.assumptions)
 
 
 def test_h6_unit_exponent_milliamps_and_display_rounding() -> None:
@@ -205,14 +236,17 @@ def test_h10_resistor_drop_and_power() -> None:
     assert "A-RESISTOR" in codes(res)
 
 
-def test_h10_resistor_without_value_is_unsupported() -> None:
+def test_h10_resistor_without_value_is_zero_ohm() -> None:
     tab = build(
         [source(1, "5"), resistor(2, None), load(3, Ipeak="2")],
         [("1:Output:1", "2:Input:1"), ("2:Output:1", "3:Input:1")],
     )
     res = run(tab)
-    assert not res.complete
-    assert by_id(res, 2).status == "unsupported"
+    assert res.complete
+    assert res.totals.ploss_w == pytest.approx(0.0)
+    assert res.loads[0].v == pytest.approx(5.0)
+    assert any(a.code == "A-DEFAULT" and "Resstnce" in a.message for a in res.assumptions)
+    assert not any(b.code == "B-NO-RESISTANCE" for b in res.blocked)
 
 
 def test_resistor_feeding_converter_converges() -> None:
@@ -228,22 +262,66 @@ def test_resistor_feeding_converter_converges() -> None:
     assert res.totals.pin_w == pytest.approx(5 * i)
 
 
-def test_h11_missing_efficiency_is_unsupported() -> None:
+def test_h11_missing_efficiency_is_the_default_90() -> None:
     tab = build(
         [source(1, "12"), buck(2, "5", None), load(3, Ipeak="1")],
         [("1:Output:1", "2:Input:1"), ("2:Output:1", "3:Input:1")],
     )
     res = run(tab)
-    assert not res.complete
-    assert by_id(res, 2).status == "unsupported"
-    assert any(b.code == "B-NO-EFFICIENCY" for b in res.blocked)
-    assert res.totals.ploss_w is None and res.totals.efficiency_pct is None
-    assert res.loads[0].v == pytest.approx(5.0)  # voltage/current stay available
+    assert res.complete
+    assert res.totals.pin_w == pytest.approx(5 / 0.9)
+    note = next(a for a in res.assumptions if a.code == "A-DEFAULT" and "NomEff" in a.message)
+    assert note.parts == [2]
+    assert by_id(res, 2).status == "assumed"
+    assert not any(b.code == "B-NO-EFFICIENCY" for b in res.blocked)
+
+
+def test_peak_efficiency_with_eff_type_true() -> None:
+    # hypothesis: EffType True is the non-default radio position, Eff Peak (default 95 %)
+    for extra, eff in (({"EffType": "True"}, 0.95), ({"EffType": "True", "PeakEff": "80"}, 0.8)):
+        tab = build(
+            [source(1, "12"), buck(2, "5", "70", **extra), load(3, Ipeak="1")],
+            [("1:Output:1", "2:Input:1"), ("2:Output:1", "3:Input:1")],
+        )
+        res = run(tab)
+        assert res.complete
+        assert res.totals.pin_w == pytest.approx(5 / eff)
+        assert "A-EFF-RADIO" in codes(res)
+
+
+def test_peak_eff_next_to_nom_eff_uses_nom_eff() -> None:
+    # the radio decides, not the presence of PeakEff (ORACLES.md); no EffType means NomEff
+    tab = build(
+        [source(1, "12"), buck(2, "5", "70", PeakEff="99"), load(3, Ipeak="1")],
+        [("1:Output:1", "2:Input:1"), ("2:Output:1", "3:Input:1")],
+    )
+    res = run(tab)
+    assert res.complete
+    assert res.totals.pin_w == pytest.approx(5 / 0.7)
+
+
+def test_defaults_for_source_and_ldo_voltage() -> None:
+    tab = build(
+        [source(1, None), ldo(2, "3"), load(3, Ipeak="1")],
+        [("1:Output:1", "2:Input:1"), ("2:Output:1", "3:Input:1")],
+    )
+    res = run(tab)
+    assert res.complete
+    assert res.totals.pin_w == pytest.approx(12.0)  # Vout omitted = 12 V (Typ)
+    assert any(a.code == "A-DEFAULT" and "Vout" in a.message for a in res.assumptions)
+    ldo_no_vout = part("LDO", 2, "L", [("Input", 1, {}), ("Output", 1, {})])
+    tab = build(
+        [source(1, "5"), ldo_no_vout, load(3, Ipeak="1")],
+        [("1:Output:1", "2:Input:1"), ("2:Output:1", "3:Input:1")],
+    )
+    res = run(tab)
+    assert res.complete
+    assert res.totals.pout_w == pytest.approx(1.0)  # LDO Vout omitted = 1 V
 
 
 @pytest.mark.parametrize(
     "extra",
-    [{"MatrixA": "0.49, 1.59, 0.35"}, {"PeakEff": "90"}, {"pLossSet": "1"}],
+    [{"MatrixA": "0.49, 1.59, 0.35"}, {"pLossSet": "1"}],
 )
 def test_h12_efficiency_models_blocked(extra: dict[str, str]) -> None:
     tab = build(
@@ -274,8 +352,9 @@ def test_h13_range_only_source() -> None:
         [("1:Output:1", "2:Input:1"), ("2:Output:1", "3:Input:1")],
     )
     res = run(under_ldo)
-    assert not res.complete and by_id(res, 2).status == "unsupported"
-    assert any(b.code == "B-NO-VOLTAGE" for b in res.blocked)
+    # no radio key exists in the corpus, so the voltage is Typ = the omitted default, 12 V
+    assert res.complete and res.totals.pin_w == pytest.approx(1 * 12)
+    assert any(a.code == "A-DEFAULT" and "Vout" in a.message for a in res.assumptions)
     # a converter path does not need the source voltage: Pin = Pout / eff
     under_buck = build(
         [rng, buck(2, "5", "80"), load(3, Ipeak="1")],
@@ -329,8 +408,8 @@ def test_h16_multiple_drivers_blocked() -> None:
     assert by_id(res, 2).status == by_id(res, 3).status == "unsupported"
 
 
-def test_h20_load_type_true_blocked() -> None:
-    res = run(chain_5v_buck_load(Ipeak="1", LoadType="True"))
+def test_h20_unknown_load_type_blocked() -> None:
+    res = run(chain_5v_buck_load(Ipeak="1", LoadType="Maybe"))
     assert not res.complete
     assert any(b.code == "B-LOAD-TYPE" for b in res.blocked)
 
@@ -396,6 +475,51 @@ def test_format_oral() -> None:
     )
     res = run(tab, current_mode="nominal")
     assert format_oral(res) == ["3.28812V/5.4mA"]
+
+
+# ---------------------------------------------------------------- oracles O1-O3 (the app)
+
+SAMPLES = Path(__file__).resolve().parent.parent / "samples"
+
+
+def _sample_tab(name: str, index: int) -> Tab:
+    path = SAMPLES / name
+    if not path.is_file():
+        pytest.skip(f"{path} is absent")
+    tabs = Tree.load(path).tabs
+    if index >= len(tabs):
+        pytest.skip(f"{name} has no tab {index + 1}")
+    return tabs[index]
+
+
+def _display(res: SolveResult) -> tuple[float, float, float | None, float | None]:
+    d = res.display
+    return (d.pin_w, d.pout_w, d.ploss_w, d.efficiency_pct)
+
+
+def test_oracle_o1_ldo() -> None:
+    res = solve(build_graph(_sample_tab("O2_ldo.ltp3", 1)))
+    assert res.complete
+    assert _display(res) == (5.0, 3.3, 1.7, 66.0)
+    assert by_id(res, 3).ploss_w == pytest.approx(1.7)
+
+
+def test_oracle_o2_cascade_with_omitted_defaults() -> None:
+    # converter 2 (90 %) and the 12 V source have no NomEff / Vout line in the file
+    res = solve(build_graph(_sample_tab("O2_ldo.ltp3", 2)))
+    assert res.complete
+    assert _display(res) == (2.78, 2.0, 0.78, 72.0)
+    assert by_id(res, 3).ploss_w == pytest.approx(0.5, abs=5e-3)
+    assert by_id(res, 2).ploss_w == pytest.approx(0.28, abs=5e-3)
+    msgs = {a.message for a in res.assumptions if a.code == "A-DEFAULT"}
+    assert any("NomEff" in m for m in msgs) and any("Vout" in m for m in msgs)
+
+
+def test_oracle_o3_resistor() -> None:
+    res = solve(build_graph(_sample_tab("O4_radio.ltp3", 3)))
+    assert res.complete
+    assert _display(res) == (10.0, 8.0, 2.0, 80.0)
+    assert res.loads[0].v == pytest.approx(4.0)
 
 
 # ---------------------------------------------------------------- corpus
