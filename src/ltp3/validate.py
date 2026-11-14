@@ -57,6 +57,7 @@ _NUMERIC = _words(
     "ConvType VisType FontSize Vout VoutMin VoutMax IoutMin IoutMax VinMin VinMax Dropout NomEff "
     "PeakEff pLossSet Ipeak Inom IpeakU InomU Thicknss ZIndex"
 )
+_KEY = re.compile(r"[A-Za-z][A-Za-z0-9]{0,7}")  # FORMAT.md 1: all corpus keys are <= 8 chars
 _POINTS = re.compile(r"(?:\(-?\d+,-?\d+\))*")
 _EPS = 1e-9  # relative slack so 3.3 vs 3.3000000000000003 never warns
 
@@ -208,9 +209,18 @@ class _TabChecker:
         for block in self.tab.blocks[1:]:
             tag = block.head.tag
             known = _KEYS.get(tag)
+            seen_keys: set[str] = set()
             for line in block.body:
                 if not isinstance(line, PropLine):
                     continue
+                if not _KEY.fullmatch(line.key):
+                    self.err(
+                        "BAD_KEY", f"<{tag}> key {line.key!r} is not [A-Za-z][A-Za-z0-9]{{0,7}}"
+                    )
+                if line.key in seen_keys:
+                    # FORMAT.md 1: no key repeats inside a block; the app's reader would take one
+                    self.err("DUP_KEY", f"<{tag}> repeats key {line.key!r}")
+                seen_keys.add(line.key)
                 if known is not None and line.key not in known:
                     self.warn("UNKNOWN_KEY", f"<{tag}> has unknown key {line.key!r}")
                 if tag in _KEYS and line.key in _NUMERIC:
@@ -369,7 +379,9 @@ class _TabChecker:
     def _electrical(self) -> None:
         graph = TabGraph(self.tab)
         if graph.warnings:
-            self.warn("NET_MISMATCH", "netId grouping and SWires/EWires links disagree")
+            # an error since QA2 #1: a netId shared by link-disconnected wires (or a link joining
+            # two netIds) makes the graph read a different circuit than the GUI draws
+            self.err("NET_MISMATCH", "netId grouping and SWires/EWires links disagree")
         for t in graph.unconnected_terminals():
             self.warn("UNCONNECTED_TERMINAL", f"terminal {t.ref} has no wire")
         for net in graph.nets:

@@ -153,6 +153,14 @@ ERROR_CASES: dict[str, Tree] = {
     "BAD_POINTS": doc(POWER, CONV, wire(10, 10, "1:Output:1", "2:Input:1", pts="(100,30)(x,y)")),
     # a non-integer part id: the model refuses the number, validation must report it
     "BAD_ARGS": doc([line.replace("Power, 1,", "Power, one,") for line in POWER]),
+    # QA2 #1: a netId that disagrees with the links is an error, not a warning
+    "NET_MISMATCH": doc(
+        POWER,
+        CONV,
+        LOAD,
+        wire(10, 10, "1:Output:1", None, ew="11", pts="(100,30)(150,30)"),
+        wire(11, 99, "2:Input:1", None, sw="10", pts="(150,30)(200,30)"),
+    ),
 }
 
 
@@ -210,13 +218,6 @@ WARN_CASES: dict[str, Tree] = {
         part("Converter", 2, [("Input", []), ("Output", ["Vout=5", "IoutMax=1"])]),
         part("Load", 3, [("Input", ["Ipeak=1.5"])], x=400),
         wire(11, 11, "2:Output:1", "3:Input:1"),
-    ),
-    "NET_MISMATCH": doc(
-        POWER,
-        CONV,
-        LOAD,
-        wire(10, 10, "1:Output:1", None, ew="11", pts="(100,30)(150,30)"),
-        wire(11, 99, "2:Input:1", None, sw="10", pts="(150,30)(200,30)"),
     ),
     "DUP_WIRE_ID": doc(POWER, CONV, W_PC, wire(10, 10, "2:Output:1", None, pts="(1,1)(2,1)")),
     "UNKNOWN_TAG": doc(POWER, ["<Zzzz> 1, 2"]),

@@ -11,6 +11,7 @@ from pathlib import Path
 from .errors import (
     AMBIGUOUS_PART,
     BAD_VALUE,
+    FILE_LOCKED,
     NOT_FOUND,
     PARSE_ERROR,
     UNKNOWN_KEY,
@@ -282,6 +283,9 @@ class Tab:
 class Tree:
     def __init__(self, document: Document) -> None:
         self.document = document
+        if not document.blocks():
+            # an empty or non-LTpowerPlanner file has no tag at all (lossless.parse stays total)
+            raise Ltp3Error(PARSE_ERROR, "no <tags> found: not an LTpowerPlanner file")
         header, tab_blocks = document.split_tabs()
         self.header = header
         self.tabs = [Tab(b) for b in tab_blocks]
@@ -299,7 +303,15 @@ class Tree:
         p = Path(path)
         try:
             data = p.read_bytes()
-        except FileNotFoundError:
+        except (FileNotFoundError, IsADirectoryError, PermissionError):
+            if p.is_dir():  # Windows raises PermissionError, not IsADirectoryError, for a folder
+                raise Ltp3Error(NOT_FOUND, f"{p} is a directory, not a file") from None
+            if p.exists():
+                raise Ltp3Error(
+                    FILE_LOCKED,
+                    f"cannot read {p}",
+                    "If it is open, close the file in LTpowerPlanner.",
+                ) from None
             raise Ltp3Error(NOT_FOUND, f"no such file: {p}") from None
         return cls.from_bytes(data)
 

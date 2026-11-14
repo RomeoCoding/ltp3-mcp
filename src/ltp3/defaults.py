@@ -3,7 +3,7 @@
 LTpowerPlanner omits a property whose value equals the app's default, so a missing key means
 "default", not "unknown" (docs/ORACLES.md, "Key finding"). Source for every number below:
 docs/ORACLES.md, section "GUI defaults" (fresh parts, LTpowerPlanner III v3.6.8, 2026-11-14),
-plus oracles O2 (NomEff 90, Power Vout 12) and O4 (a fresh Resistor does write Resstnce 0).
+plus oracles O2 (NomEff 90, Power Vout 12) and O4 (a fresh Resistor writes Resstnce 0 explicitly).
 Older template versions (3.0.3-3.5.4) may use other defaults; docs/deviations/P9.md reports it.
 
 Keys are `(part type, scope, key)`. Scope `Part` is the part's own property, `Input`/`Output`
@@ -40,8 +40,12 @@ DEFAULTS: Mapping[tuple[str, str, str], str] = {
     ("LDO", "Output", "VoutMin"): "0.6",
     ("LDO", "Output", "VoutMax"): "15",
     ("LDO", "Output", "Dropout"): "0.2",
-    # Resistor: ORACLES "Resistor" row. A missing Resstnce is 0 ohm, not "blocked".
-    ("Resistor", "Part", "Resstnce"): "0",
+    # Resistor: an omitted Resstnce is 1 mohm, not 0 (QA2 #4). Evidence: the 8 testable v3.0.3
+    # ResType-2 resistors of the i.MX7 templates, "Communication Power Chain Example " (ORal
+    # 1.188 V at 12 A = 1.2 - 0.001*12) and "Generic PFGA" (0.99761 V at 2.39 A) all drop exactly
+    # 1 mohm * I. v3.6.8 writes `Resstnce: 0` explicitly for a fresh resistor (O4), so 0 is never
+    # the omitted value. See docs/ORACLES.md.
+    ("Resistor", "Part", "Resstnce"): "0.001",
     ("Resistor", "Part", "PLossMax"): "2",
     ("Resistor", "Input", "VinMin"): "0.1",
     ("Resistor", "Input", "VinMax"): "500",

@@ -236,15 +236,16 @@ def test_h10_resistor_drop_and_power() -> None:
     assert "A-RESISTOR" in codes(res)
 
 
-def test_h10_resistor_without_value_is_zero_ohm() -> None:
+def test_h10_resistor_without_value_is_one_milliohm() -> None:
+    # QA2 #4: the omitted default is 1 mohm (ORACLES.md), so 2 A drops 2 mV and loses 4 mW
     tab = build(
         [source(1, "5"), resistor(2, None), load(3, Ipeak="2")],
         [("1:Output:1", "2:Input:1"), ("2:Output:1", "3:Input:1")],
     )
     res = run(tab)
     assert res.complete
-    assert res.totals.ploss_w == pytest.approx(0.0)
-    assert res.loads[0].v == pytest.approx(5.0)
+    assert res.totals.ploss_w == pytest.approx(0.004)
+    assert res.loads[0].v == pytest.approx(4.998)
     assert any(a.code == "A-DEFAULT" and "Resstnce" in a.message for a in res.assumptions)
     assert not any(b.code == "B-NO-RESISTANCE" for b in res.blocked)
 

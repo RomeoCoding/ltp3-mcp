@@ -45,11 +45,11 @@ Radio buttons write only their non-default position (O4):
 | H3 | source is ideal | CONFIRMED | | `test_artix_oracle` |
 | H4 | load current is `Ipeak` when `Inom` is absent | CONFIRMED, still listed | `A-CURRENT-PEAK-ONLY` | `test_artix_oracle` (assumptions are exactly this one) |
 | H5 | load current is `Inom` iff `LoadType : False`, else `Ipeak` | CONFIRMED (O4) | | `test_h5_current_modes`, `test_h5_load_type_false_selects_nominal`, `test_oracle_o4_radio_files`, `test_load_current_defaults` |
-| H6 | `IpeakU`/`InomU` are power-of-ten exponents | LIKELY, not flagged | | `test_h6_unit_exponent_milliamps_and_display_rounding`, `test_format_oral` |
+| H6 | `IpeakU`/`InomU` are power-of-ten exponents | LIKELY; `IpeakU` flagged until a GUI oracle confirms it | `A-UNIT-EXP-PEAK` (whenever a non-zero `IpeakU` is applied) | `test_h6_unit_exponent_milliamps_and_display_rounding`, `test_format_oral` |
 | H7 | LDO `Iin=Iout`, `Pin=Vin*Iin` | CONFIRMED (O1) | `A-LDO` (still emitted) | `test_h7_ldo`, `test_oracle_o1_ldo` |
-| H8 | `Ignd` | BLOCKED | `B-LDO-GROUND-CURRENT` | `test_h8_ldo_ground_current_blocked` |
+| H8 | `Ignd` | BLOCKED when non-zero; an explicit `Ignd : 0` is the default and adds nothing | `B-LDO-GROUND-CURRENT` | `test_h8_ldo_ground_current_blocked`, `test_explicit_zero_ignd_does_not_block_ldo` |
 | H9 | cascade `Iin = Pin/Vin_net` | CONFIRMED (O2) | `A-CASCADE` (still emitted) | `test_h9_cascade`, `test_oracle_o2_cascade_with_omitted_defaults` |
-| H10 | resistor `Vout = Vin - R*I`, `Ploss = I^2 R`, load sees the drop | CONFIRMED (O3) | `A-RESISTOR` (still emitted); missing `Resstnce` = 0 ohm with `A-DEFAULT` (see P9 deviations: older files may differ) | `test_h10_*`, `test_oracle_o3_resistor`, `test_resistor_feeding_converter_converges`, `test_oral_header_agreement` |
+| H10 | resistor `Vout = Vin - R*I`, `Ploss = I^2 R`, load sees the drop | CONFIRMED (O3) | `A-RESISTOR` (still emitted); missing `Resstnce` = 1 mohm with `A-DEFAULT` (QA2 #4, evidence in ORACLES.md; a fresh v3.6.8 resistor writes `Resstnce : 0` explicitly) | `test_h10_*`, `test_oracle_o3_resistor`, `test_resistor_feeding_converter_converges`, `test_oral_header_agreement` |
 | H11 | output without `NomEff` | RESOLVED by omitted defaults: NomEff = 90 (O2) | `A-DEFAULT` | `test_h11_missing_efficiency_is_the_default_90` |
 | H12 | `MatrixA`, `pLossSet` block; `EffType : True` selects `PeakEff`; `PeakEff` alone is inert | BLOCKED / HYPOTHESIS | `B-EFFICIENCY-MODEL`, `A-EFF-RADIO` | `test_h12_efficiency_models_blocked`, `test_peak_efficiency_with_eff_type_true`, `test_peak_eff_next_to_nom_eff_uses_nom_eff` |
 | H13 | source without `Vout` | RESOLVED: Typ = 12 V default (no Min/Max radio key exists) | `A-DEFAULT`; `B-NO-VOLTAGE` only for a driver whose voltage is unknown | `test_h13_range_only_source`, `test_defaults_for_source_and_ldo_voltage` |
@@ -65,7 +65,7 @@ Radio buttons write only their non-default position (O4):
 Other blocked codes: `B-UNDRIVEN` (a part draws power from a net with no driver; test
 `test_undriven_input_is_unsupported`), `B-BAD-VALUE` (a number does not parse, `NomEff <= 0`),
 `B-NO-CONVERGENCE`. Other warnings: `W-UNCONNECTED` (load input not wired: it draws nothing),
-`W-NO-CURRENT`, `W-UNKNOWN-PART`, `W-GRAPH` (graph warnings). `A-CURRENT-FALLBACK`: no `Ipeak`,
+`W-NO-CURRENT`, `W-UNKNOWN-PART`, `W-GRAPH` (graph warnings). `A-NOMINAL-FALLBACK`: forced `current_mode="nominal"` on a load with no `Inom` uses `Ipeak` (the 10 A GUI default would be invented; QA2 #11). The `LoadType : False` radio still reads the 10 A default. `A-CURRENT-FALLBACK`: no `Ipeak`,
 `Inom` used.
 
 Part status: `ok`, `assumed` (the part takes part in a flagged `A-*` rule other than
@@ -84,4 +84,4 @@ templates with a blocked tab and 70 have only complete tabs (`docs/deviations/P9
 ## Open (needs oracles, PLAN 6.2)
 
 H6 and rounding (O5), H8 (O12), H15 (O8), H16 (O7). `EffType : True` = peak (one corpus use).
-Min/Max power-voltage radio (no key found). Resistor default in older files (P9 deviations).
+Min/Max power-voltage radio (no key found). `IpeakU` (A-UNIT-EXP-PEAK).

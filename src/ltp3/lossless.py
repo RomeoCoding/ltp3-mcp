@@ -119,7 +119,9 @@ class Document:
         """Group lines into blocks. Lines before the first tag belong to no block (they stay in
         `lines`, so nothing is lost)."""
         starts = [i for i, line in enumerate(self.lines) if isinstance(line, TagLine)]
-        ends = [*starts[1:], len(self.lines)]
+        # an empty or tagless document has no starts; the unguarded `ends` held one entry and
+        # made the strict zip raise ValueError
+        ends = [*starts[1:], len(self.lines)] if starts else []
         return [Block(self, s, e) for s, e in zip(starts, ends, strict=True)]
 
     def _index(self, line: Line) -> int:

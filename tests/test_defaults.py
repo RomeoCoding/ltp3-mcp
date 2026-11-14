@@ -21,7 +21,7 @@ from ltp3.numfmt import parse
         ("LDO", "Output", "Vout", 1),
         ("LDO", "Output", "Dropout", 0.2),
         ("LDO", "Part", "Ignd", 0),
-        ("Resistor", "Part", "Resstnce", 0),
+        ("Resistor", "Part", "Resstnce", 0.001),
         ("Resistor", "Part", "PLossMax", 2),
         ("Load", "Input", "Ipeak", 15),
         ("Load", "Input", "Inom", 10),

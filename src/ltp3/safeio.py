@@ -17,6 +17,7 @@ from .errors import (
     BAD_PATH,
     BAD_VALUE,
     FILE_EXISTS,
+    FILE_LOCKED,
     NOT_FOUND,
     STALE_FILE,
     Ltp3Error,
@@ -60,7 +61,13 @@ def load(path: str | os.PathLike[str]) -> Loaded:
     p = Path(path)
     try:
         data = p.read_bytes()
-    except (FileNotFoundError, IsADirectoryError):
+    except (FileNotFoundError, IsADirectoryError, PermissionError):
+        if p.is_dir():  # Windows raises PermissionError, not IsADirectoryError, for a folder
+            raise Ltp3Error(NOT_FOUND, f"{p} is a directory, not a file") from None
+        if p.exists():
+            raise Ltp3Error(
+                FILE_LOCKED, f"cannot read {p}", "If it is open, close the file in LTpowerPlanner."
+            ) from None
         raise Ltp3Error(NOT_FOUND, f"no such file: {p}") from None
     return Loaded(p, data, sha256_hex(data), Tree.from_bytes(data))
 
@@ -114,7 +121,10 @@ def save(
     copied to `<name>.bak-YYYYMMDD-HHMMSS` first. Pass `opened_sha256` (from `Loaded.sha256`) when
     overwriting the file that was opened, so an edit made by the GUI meanwhile gives `STALE_FILE`.
     """
-    tree = subject if isinstance(subject, Tree) else Tree.from_document(subject)
+    # Always rebuild: a caller's Tree caches block indices that go stale after any edit, and the
+    # document is the only source of truth for what gets written (QA2 finding 6).
+    document = subject.document if isinstance(subject, Tree) else subject
+    tree = Tree.from_document(document)
     path = check_writable(target)
     if not path.parent.is_dir():
         # creating directories would let a typo write somewhere unintended
@@ -154,6 +164,16 @@ def save(
                 shutil.copyfile(path, backup)
             os.replace(tmp, path)
         except OSError as exc:
+            if backup is not None:
+                # the target was not replaced, so the backup would be an orphan copy of it
+                backup.unlink(missing_ok=True)
+            if isinstance(exc, PermissionError):
+                # on Windows an open file (or a read-only one) refuses os.replace with this
+                raise Ltp3Error(
+                    FILE_LOCKED,
+                    f"cannot write {path}: it is locked or read-only",
+                    "If it is open, close the file in LTpowerPlanner, then retry.",
+                ) from exc
             raise Ltp3Error(BAD_PATH, f"could not write {path}: {exc}") from exc
     finally:
         # also runs for BaseException (a simulated or real kill signal): never leave the temp behind

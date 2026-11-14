@@ -344,7 +344,9 @@ class _Solver:
             spec.outs.append(out)
             if part.type == "Converter":
                 self._check_efficiency(part, t, out, loaded)
-        if part.type == "LDO" and part.props.get("Ignd") is not None:
+        # an explicit `Ignd : 0` is the GUI default and adds no ground current (QA2 #10)
+        ignd = self._num(part, part, "Ignd") if part.type == "LDO" else None
+        if ignd is not None and ignd != 0:
             self._block(
                 part, "B-LDO-GROUND-CURRENT", "Ignd (ground current) has no known unit (H8)"
             )
@@ -416,6 +418,14 @@ class _Solver:
             radio_nom = lt == "false"
             mode = self.opt.current_mode
             use_nom = mode == "nominal" or (mode == "auto" and radio_nom)
+            inom_blank = not (t.props.get("Inom") or "").strip()
+            nominal_fallback = (
+                mode == "nominal" and inom_blank and bool((t.props.get("Ipeak") or "").strip())
+            )
+            if nominal_fallback:
+                # a load with only Ipeak has no nominal current; the 10 A GUI default would be an
+                # invention, so forced nominal mode uses Ipeak and says so (QA2 #11)
+                use_nom = False
             key, ukey = ("Inom", "InomU") if use_nom else ("Ipeak", "IpeakU")
             exp = self._int(part, t, ukey)
             if net is None:
@@ -423,6 +433,19 @@ class _Solver:
             else:
                 value = self._val(part, t, "Input", key)
                 amps = _scale(value, exp) if value is not None else 0.0
+            if net is not None and nominal_fallback:
+                self.static.add(
+                    "A-NOMINAL-FALLBACK",
+                    "Forced nominal mode, but the load has no Inom: Ipeak is used instead",
+                    part.id,
+                )
+            if net is not None and key == "Ipeak" and exp != 0:
+                # no oracle has confirmed that IpeakU scales Ipeak like InomU scales Inom (H6)
+                self.static.add(
+                    "A-UNIT-EXP-PEAK",
+                    "IpeakU is applied as a power-of-ten exponent on Ipeak (H6, unconfirmed)",
+                    part.id,
+                )
             spec = _LoadSpec(part, t, amps, value, exp)
             if lt not in ("", "false", "true"):
                 spec.blocked = "B-LOAD-TYPE"

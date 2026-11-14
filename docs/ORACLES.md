@@ -29,14 +29,24 @@ These are presumed to be the values used when a key is missing. That still needs
 | Power | VoutMin 2, **Vout (Typ) 12**, VoutMax 15 V; IoutMax 15 A. A radio button picks Min / **Typ** / Max as the voltage used |
 | Converter | VinMin 4.5, VinMax 20 V; Frequency empty; Topology All; Converter Type All. Output 1: **Vout 2 V**, IoutMax 15 A, VoutMin 0.6, VoutMax 15 V; efficiency mode "Manually Enter Efficiency"; a radio button picks **Eff Nom 90 %** or Eff Peak 95 % |
 | LDO | VinMin 0.8, VinMax 20 V; **Ignd 0 mA**. Output 1: **Vout 1 V**, IoutMax 5 A, IoutMin 0.1 A, VoutMin 0.6, VoutMax 15 V, **Vdropout 0.2 V** |
-| Resistor | **Resistance 0 Ω**; VinMin 0.1, VinMax 500 V; PLossMax 2 W |
+| Resistor | **Resistance 0 Ω written explicitly** by v3.6.8 (a fresh part writes `Resstnce: 0`); an **omitted** `Resstnce` in a file is **1 mΩ**, see below; VinMin 0.1, VinMax 500 V; PLossMax 2 W |
 | Load | INominal 10 A, **IPeak 15 A**, unit A. A radio button picks INominal or **IPeak** as the current used (default IPeak) |
 
 Implications:
 - `PeakEff` being present does not mean the peak model is used; the efficiency radio decides. A missing `NomEff` means 90 %.
 - Peak vs nominal load current (H5) is decided by the load's radio button. Its key is still unknown (candidate: `LoadType`, 712 occurrences). O4 = toggle the radio, save, diff.
 - Power voltage depends on the radio. A source with only VoutMin/VoutMax has Typ = the 12 V default unless the radio picks Min or Max.
-- A missing `Resstnce` means 0 Ω, not "blocked".
+- A missing `Resstnce` means **1 mΩ** (QA2 #4), not 0 Ω and not "blocked". The GUI default shown for a fresh resistor (0 Ω) is written to the file, so it is never the omitted value.
+
+## Omitted `Resstnce` is 1 mΩ (QA2, 2026-11-14)
+Evidence is the `<ORal>` header of v3.0.3 templates, written by the app itself. A resistor without `Resstnce` drops exactly 1 mΩ × I:
+
+| Template | Load | ORal | 1 mΩ model |
+|---|---|---|---|
+| `Communication Power Chain Example ` (tab 1) | 52:Input:1, 12 A | 1.188 V | 1.2 V − 0.001 × 12 A = 1.188 V |
+| `Generic PFGA Power Tree` (tab 1) | 4:Input:1, 1.1 A + 1.29 A | 0.99761 V | 1.0 V − 0.001 × 2.39 A = 0.99761 V |
+
+All 8 testable v3.0.3 ResType-2 resistors in the i.MX7 templates agree. With 0 Ω the header cannot be reproduced. Tests: `test_resistor_default_reproduces_app_load_voltages`, `test_omitted_resistance_is_one_milliohm`. Corpus effect: complete tabs stay at 382 of 444.
 
 ## GUI round-trip of editor output (P4), 2026-11-14
 All three files in `samples/generated/` open in LTpowerPlanner 3.6.8 without errors, and Calculate runs. Our solver matches the app's summary on all 12 values:
