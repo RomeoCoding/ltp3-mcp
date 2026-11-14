@@ -40,3 +40,22 @@ Each entry: what the plan said, what was done, why.
    0 fail `fmt(parse(v)) == v` (threshold was 99.9 %).
 6. Non-UTF-8 input is decoded as `cp1252` with `errors="surrogateescape"` so the four byte values
    cp1252 leaves undefined still round-trip (plain `cp1252` would raise).
+
+## P2
+
+1. Graph API is a `TabGraph` class (`build_graph(tab, merge_net_labels=True)`) with methods `nets`,
+   `net_of`, `drivers`, `consumers`, `passives`, `upstream`, `downstream`, `topo_order`, instead of
+   free functions taking a tab, so P3's `solve(tab_graph, ...)` receives one object. A free
+   `nets(tab)` is also exported. Extra: `unconnected_terminals()`, `dangling`, `warnings`.
+2. `netid_partition` / `link_partition` group wire **ids**, not list positions. Tab "12Vin +3.3V
+   External 80V" of `Power Tree for ADGM1304.ltp3t` holds two byte-identical wires with id 114; links
+   cannot distinguish them, so by-position partitions differ in 1 of 444 tabs. By id, 444/444 agree
+   as PLAN.md states. Net building itself unions by position, so both duplicates join the net.
+3. `Props.__setitem__` only edits existing keys; a missing key raises `UNKNOWN_KEY`. Inserting a line
+   needs `Document.lines` positions and canonical order (P4 editor); `Block.body` is a copy of the
+   line list. No identity-based insert helper from lossless.py was needed in P2.
+4. `topo_order` includes every part of the tab (isolated Net/Capacitor parts too), ties in file
+   order. Cycle check runs on part-level edges from Output to Input terminals.
+5. Test correction: the Artix-7 sample has 10 symbols (3 labels + 1 label + 1 rect + 1 label + 4
+   rects), not 9 as first written in `test_model.py`; fixed before the implementation commit.
+   PLAN.md gives no symbol count.

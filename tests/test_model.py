@@ -84,7 +84,7 @@ def test_artix_structure(artix: Tree) -> None:
         ("Power", 1), ("Converter", 2), ("Load", 11), ("Converter", 16)
     ]  # fmt: skip
     assert len(tab.wires) == 6
-    assert len(tab.symbols) == 9
+    assert len(tab.symbols) == 10
     w = tab.wires[1]
     assert (w.id, w.net_id) == (18, 9)
     assert w.start is None

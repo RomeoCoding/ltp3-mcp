@@ -98,7 +98,7 @@ def test_cycle_raises() -> None:
 
 
 def _label_tree() -> Tree:
-    # Power -> wire 10 -> label "V"; label "V" -> wire 11 -> Load: two wire nets, one electrical net.
+    # Power -> wire 10 -> label V; label V -> wire 11 -> Load: two wire nets, one electrical net
     data = _text(
         *_hdr(),
         "<BPrt> Power, 1, 0, 0, P", "<Term> Output, 1",
