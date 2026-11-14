@@ -1,4 +1,4 @@
-"""P3: the solver (PLAN.md section 6). Synthetic trees are built from text with the lossless layer."""
+"""P3: the solver (PLAN.md section 6). Synthetic trees are built as text, then parsed."""
 
 from __future__ import annotations
 
@@ -60,14 +60,15 @@ def netlabel(pid: int, name: str) -> list[str]:
 
 
 def build(parts: list[list[str]], links: list[tuple[str, str]]) -> Tab:
-    """`links` are (from, to) terminal refs 'id:Kind:n'; one wire each. Wires from the same
-    `from` terminal share a net id, so fan-out needs no junction wires."""
+    """`links` are (from, to) terminal refs 'id:Kind:n'; one wire each. Wires sharing a terminal
+    share a net id, so fan-out needs no junction wires."""
     lines = ["<Vers> 3.6.8", "<Tabs> 1, #FFFFFACD, T", "<Summ> 0, 0, 18, #FF0000FF, #00FFFFFF"]
     for p in parts:
         lines += p
     nets: dict[str, int] = {}
     for i, (a, b) in enumerate(links):
-        net = nets.setdefault(a, 1000 + len(nets))
+        net = nets.get(a) or nets.get(b) or 1000 + len(nets)
+        nets[a] = nets[b] = net
         lines.append(f"<Wire> {100 + i}, {net}")
         for tag, ref in (("S", a), ("E", b)):
             pid, kind, n = ref.split(":")
