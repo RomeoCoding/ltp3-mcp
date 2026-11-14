@@ -1,0 +1,3 @@
+# autocrlf would rewrite CRLF and break byte-exact round-trip on checkout
+*.ltp3 -text
+*.ltp3t -text

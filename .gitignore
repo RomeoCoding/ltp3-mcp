@@ -1,0 +1,14 @@
+# Save-As copies of an ADI template count as ADI content
+samples/
+# factory templates are ADI content and never enter the repo
+*.ltp3t
+*.bak-*
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+dist/
+*.egg-info/

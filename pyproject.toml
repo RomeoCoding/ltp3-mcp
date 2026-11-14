@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ltp3-mcp"
+version = "0.1.0"
+description = "Lossless reader/writer, solver and MCP server for LTpowerPlanner III power-tree files"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+# 3.11 is the floor of the pinned dev tools (hypothesis 6.170.15); the MCP SDK itself allows 3.10
+requires-python = ">=3.11"
+dependencies = ["mcp==2.3.0"]
+
+[dependency-groups]
+dev = [
+    "pytest==9.2.0",
+    "pytest-cov==7.1.0",
+    "hypothesis==6.170.15",
+    "ruff==0.17.5",
+    "mypy==2.4.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ltp3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["corpus: needs the factory template corpus installed locally (skips when absent)"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
