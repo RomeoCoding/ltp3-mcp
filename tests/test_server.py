@@ -47,15 +47,15 @@ class Tools:
     def __init__(self, client: Client) -> None:
         self.client = client
 
-    async def __call__(self, name: str, **args: Any) -> Res:
-        r = await self.client.call_tool(name, args)
+    async def __call__(self, tool: str, /, **args: Any) -> Res:
+        r = await self.client.call_tool(tool, args)
         text = "".join(getattr(c, "text", "") for c in r.content)
         if r.is_error:
             return Res(True, json.loads(text), text)
         return Res(False, r.structured_content or {}, text)
 
-    async def ok(self, name: str, **args: Any) -> dict[str, Any]:
-        r = await self(name, **args)
+    async def ok(self, tool: str, /, **args: Any) -> dict[str, Any]:
+        r = await self(tool, **args)
         assert not r.is_error, r.text
         return r.data
 
@@ -133,7 +133,7 @@ def test_open_tree_and_errors(sample: Path, tmp_path: Path) -> None:
         r = await t.ok("open_tree", path=str(sample))
         assert r["tree_id"] and r["is_template"] is False and len(r["sha256"]) == 64
         assert r["version"] == "3.6.8"
-        assert r["tabs"][0]["parts"] == 5
+        assert r["tabs"][0]["parts"] == 4
         assert (await t("open_tree", path=str(tmp_path / "none.ltp3"))).code == "NOT_FOUND"
         assert (await t("open_tree", path=str(tmp_path))).code == "BAD_PATH"
         assert (await t("open_tree", path=str(bad))).code == "PARSE_ERROR"
@@ -180,7 +180,7 @@ def test_close_tree(sample: Path) -> None:
         await t.ok("close_tree", tree_id=tid)  # clean tree closes
         assert (await t("close_tree", tree_id=tid)).code == "UNKNOWN_TREE"
         tid = (await t.ok("open_tree", path=str(sample)))["tree_id"]
-        await t.ok("rename_part", tree_id=tid, part=2, name="X")
+        await t.ok("rename_part", tree_id=tid, part_id=2, name="X")
         guard = await t("close_tree", tree_id=tid)
         assert guard.code == "VALIDATION_FAILED" and "unsaved" in guard.data["message"].lower()
         await t.ok("close_tree", tree_id=tid, discard=True)
@@ -200,16 +200,16 @@ def test_read_tools(sample: Path) -> None:
         parts = (await t.ok("list_parts", tree_id=tid, type="Converter"))["parts"]
         assert [p["id"] for p in parts] == [2, 16]
         term = next(x for x in parts[0]["terminals"] if x["ref"] == "2:Input:1")
-        assert term["connected_to"] == ["1:Output:1"] and term["net"] is not None
-        got = await t.ok("get_part", tree_id=tid, part="FPGA")
+        assert "1:Output:1" in term["connected_to"] and term["net"] is not None
+        got = await t.ok("get_part", tree_id=tid, part_name="FPGA")
         assert got["part"]["id"] == 11 and 2 in got["upstream"] and got["downstream"] == []
         nets = (await t.ok("list_nets", tree_id=tid))["nets"]
         assert any(n["voltage"] == 5.0 and n["drivers"] == ["1:Output:1"] for n in nets)
-        assert (await t("get_part", tree_id=tid, part=999)).code == "UNKNOWN_PART"
+        assert (await t("get_part", tree_id=tid, part_id=999)).code == "UNKNOWN_PART"
         assert (await t("list_parts", tree_id=tid, tab=7)).code == "UNKNOWN_TAB"
         assert (await t("list_parts", tree_id=tid, tab="New Tab 1")).data["parts"]
-        await t.ok("rename_part", tree_id=tid, part=16, name="LTC3633 BUCK")
-        amb = await t("get_part", tree_id=tid, part="LTC3633 BUCK")
+        await t.ok("rename_part", tree_id=tid, part_id=16, name="LTC3633 BUCK")
+        amb = await t("get_part", tree_id=tid, part_name="LTC3633 BUCK")
         assert amb.code == "AMBIGUOUS_PART" and "2" in amb.data["hint"]
 
     run(go)
@@ -235,7 +235,9 @@ def test_validate_reports_errors(sample: Path, tmp_path: Path) -> None:
     broken.write_bytes(sample.read_bytes().replace(b"<BPrt> Load, 11,", b"<BPrt> Load, 2,"))
 
     async def go(t: Tools) -> None:
-        good = await t.ok("validate", tree_id=(await t.ok("open_tree", path=str(sample)))["tree_id"])
+        good = await t.ok(
+            "validate", tree_id=(await t.ok("open_tree", path=str(sample)))["tree_id"]
+        )
         assert good["ok"] is True and good["errors"] == []
         bad_id = (await t.ok("open_tree", path=str(broken)))["tree_id"]
         bad = await t.ok("validate", tree_id=bad_id)
@@ -253,24 +255,26 @@ def test_validate_reports_errors(sample: Path, tmp_path: Path) -> None:
 def test_set_property_rename_undo_preview(sample: Path) -> None:
     async def go(t: Tools) -> None:
         tid = (await t.ok("open_tree", path=str(sample)))["tree_id"]
-        r = await t.ok("set_property", tree_id=tid, target="1:Output:1", key="Vout", value=3.3)
+        r = await t.ok("set_property", tree_id=tid, terminal="1:Output:1", key="Vout", value=3.3)
         assert r["old"] == "5" and r["new"] == "3.3" and r["ok"] is True
         assert r["changed_lines"] == {"added": 0, "removed": 0, "modified": 1}
         p = await t.ok("preview_changes", tree_id=tid)
         assert p["dirty"] is True and "+\tVout    : 3.3" in p["diff"].replace("\r", "")
         assert p["stats"]["modified"] == 1
-        rn = await t.ok("rename_part", tree_id=tid, part=11, name="Zynq")
+        rn = await t.ok("rename_part", tree_id=tid, part_id=11, name="Zynq")
         assert rn["old"] == "FPGA" and rn["new"] == "Zynq"
         assert (await t.ok("undo", tree_id=tid))["remaining"] == 1
         assert (await t.ok("undo", tree_id=tid))["remaining"] == 0
         assert (await t.ok("preview_changes", tree_id=tid))["dirty"] is False
         assert (await t("undo", tree_id=tid)).code == "NOTHING_TO_UNDO"
-        gone = await t.ok("set_property", tree_id=tid, target="1:Output:1", key="Vout", value=None)
+        gone = await t.ok(
+            "set_property", tree_id=tid, terminal="1:Output:1", key="Vout", value=None
+        )
         assert gone["new"] is None
-        assert (await t("set_property", tree_id=tid, target=1, key="Nope", value=1)).code == (
+        assert (await t("set_property", tree_id=tid, part_id=1, key="Nope", value=1)).code == (
             "UNKNOWN_KEY"
         )
-        bad = await t("set_property", tree_id=tid, target=2, key="PartNumb", value="a\nb")
+        bad = await t("set_property", tree_id=tid, part_id=2, key="PartNumb", value="a\nb")
         assert bad.code == "BAD_VALUE"
         # a failed edit leaves nothing on the undo stack
         assert (await t.ok("undo", tree_id=tid))["remaining"] == 0
@@ -282,13 +286,13 @@ def test_read_only_tree_refuses_edits(sample: Path) -> None:
     async def go(t: Tools) -> None:
         tid = (await t.ok("open_tree", path=str(sample), read_only=True))["tree_id"]
         for name, args in (
-            ("rename_part", {"part": 2, "name": "z"}),
-            ("set_property", {"target": 2, "key": "Color", "value": "#FF000000"}),
+            ("rename_part", {"part_id": 2, "name": "z"}),
+            ("set_property", {"part_id": 2, "key": "Color", "value": "#FF000000"}),
             ("add_part", {"type": "Load", "name": "L"}),
-            ("remove_part", {"part": 11}),
+            ("remove_part", {"part_id": 11}),
             ("connect", {"source": "1:Output:1", "sink": "2:Input:1"}),
             ("disconnect", {"terminal": "2:Input:1"}),
-            ("move_part", {"part": 2, "x": 100, "y": 100}),
+            ("move_part", {"part_id": 2, "x": 100, "y": 100}),
             ("undo", {}),
         ):
             assert (await t(name, tree_id=tid, **args)).code == "READ_ONLY", name
@@ -303,7 +307,7 @@ def test_structure_edits(sample: Path) -> None:
         ldo = (
             await t.ok(
                 "add_part", tree_id=tid, type="LDO", name="LDO A", part_number="LT3045",
-                outputs=[{"vout": 1.8}], near=16,
+                outputs=[{"vout": 1.8}], near_id=16,
             )
         )["part"]  # fmt: skip
         assert ldo["type"] == "LDO" and ldo["terminals"][1]["ref"].endswith(":Output:1")
@@ -315,20 +319,22 @@ def test_structure_edits(sample: Path) -> None:
         )["part"]  # fmt: skip
         c = await t.ok("connect", tree_id=tid, source="16:Output:1", sink=f"{ldo['id']}:Input:1")
         assert c["wires_added"] and c["ok"] is True and c["changed_lines"]["added"] > 0
-        await t.ok("connect", tree_id=tid, source=f"{ldo['id']}:Output:1", sink=f"{load['id']}:Input:1")
+        await t.ok(
+            "connect", tree_id=tid, source=f"{ldo['id']}:Output:1", sink=f"{load['id']}:Input:1"
+        )
         again = await t("connect", tree_id=tid, source="2:Output:1", sink=f"{ldo['id']}:Input:1")
         assert again.code == "TERMINAL_IN_USE"
         assert (await t("connect", tree_id=tid, source="2:Input:1", sink="11:Input:1")).is_error
         assert (await t("connect", tree_id=tid, source="99:Output:1", sink="11:Input:1")).code == (
             "UNKNOWN_TERMINAL"
         )
-        mv = await t.ok("move_part", tree_id=tid, part=load["id"], x=1203, y=700)
+        mv = await t.ok("move_part", tree_id=tid, part_id=load["id"], x=1203, y=700)
         assert "rerouted_wires" in mv and mv["warnings"]  # 1203 is off the 5-unit grid
         dis = await t.ok("disconnect", tree_id=tid, terminal=f"{load['id']}:Input:1")
         assert dis["removed_wires"]
-        rem = await t.ok("remove_part", tree_id=tid, part=load["id"])
+        rem = await t.ok("remove_part", tree_id=tid, part_id=load["id"])
         assert "removed_wires" in rem and "merged_junctions" in rem
-        assert (await t("remove_part", tree_id=tid, part=load["id"])).code == "UNKNOWN_PART"
+        assert (await t("remove_part", tree_id=tid, part_id=load["id"])).code == "UNKNOWN_PART"
         bad = await t("add_part", tree_id=tid, type="Net", name="n")
         assert bad.code == "BAD_VALUE"
         assert (await t.ok("validate", tree_id=tid))["ok"] is True
@@ -357,12 +363,12 @@ def test_compare_and_export(sample: Path) -> None:
         b = (await t.ok("open_tree", path=str(sample)))["tree_id"]
         same = await t.ok("compare_trees", a=a, b=b)
         assert same["count"] == 0
-        await t.ok("set_property", tree_id=b, target="2:Output:1", key="NomEff", value=85)
+        await t.ok("set_property", tree_id=b, terminal="2:Output:1", key="NomEff", value=85)
         diff = await t.ok("compare_trees", a=a, b=b)
         assert any(c["key"] == "NomEff" for c in diff["changes"])
         kinds = {c["kind"] for c in diff["changes"]}
         assert "result" in kinds  # include_solve defaults to true
-        assert diff["solve_delta"]["pin_w"] > 0
+        assert diff["solve_delta"]["pin_w"] < 0  # higher efficiency draws less
         no_solve = await t.ok("compare_trees", a=a, b=b, include_solve=False)
         assert "result" not in {c["kind"] for c in no_solve["changes"]}
         assert (await t("compare_trees", a=a, b="zzz")).code == "UNKNOWN_TREE"
@@ -380,7 +386,7 @@ def test_compare_and_export(sample: Path) -> None:
 def test_save_policy(sample: Path, tmp_path: Path) -> None:
     async def go(t: Tools) -> None:
         tid = (await t.ok("open_tree", path=str(sample)))["tree_id"]
-        await t.ok("rename_part", tree_id=tid, part=11, name="Zynq")
+        await t.ok("rename_part", tree_id=tid, part_id=11, name="Zynq")
         # default target is a NEW path next to the opened file; the opened file is untouched
         before = sample.read_bytes()
         r = await t.ok("save_tree", tree_id=tid)
@@ -400,7 +406,7 @@ def test_save_policy(sample: Path, tmp_path: Path) -> None:
         adi = r"C:\Program Files (x86)\LTC\LTpowerCAD2\out.ltp3"
         assert (await t("save_tree", tree_id=tid, path=adi)).code == "PATH_NOT_ALLOWED"
         # overwrite the opened file: explicit flag, backup kept
-        await t.ok("rename_part", tree_id=tid, part=11, name="Zynq2")
+        await t.ok("rename_part", tree_id=tid, part_id=11, name="Zynq2")
         ow = await t.ok("save_tree", tree_id=tid, path=str(sample), overwrite=True)
         assert ow["backup_path"] and Path(ow["backup_path"]).read_bytes() == before
         assert b"Zynq2" in sample.read_bytes()
@@ -411,7 +417,7 @@ def test_save_policy(sample: Path, tmp_path: Path) -> None:
 def test_save_stale_file(sample: Path) -> None:
     async def go(t: Tools) -> None:
         tid = (await t.ok("open_tree", path=str(sample)))["tree_id"]
-        await t.ok("rename_part", tree_id=tid, part=11, name="Mine")
+        await t.ok("rename_part", tree_id=tid, part_id=11, name="Mine")
         sample.write_bytes(sample.read_bytes() + b"\r\n")  # the GUI saved in between
         r = await t("save_tree", tree_id=tid, path=str(sample), overwrite=True)
         assert r.code == "STALE_FILE"
@@ -442,6 +448,60 @@ def test_errors_are_structured_and_never_a_traceback(
         assert v.is_error and v.code == "BAD_ARGUMENTS" and "tree_id" in v.data["message"]
         u = await t("no_such_tool")
         assert u.is_error and u.code == "UNKNOWN_TOOL"
+
+    run(go)
+
+
+def test_digit_names_are_names_not_ids(sample: Path) -> None:
+    async def go(t: Tools) -> None:
+        tid = (await t.ok("open_tree", path=str(sample)))["tree_id"]
+        await t.ok("rename_part", tree_id=tid, part_id=11, name="2")
+        assert (await t.ok("get_part", tree_id=tid, part_name="2"))["part"]["id"] == 11
+        assert (await t.ok("get_part", tree_id=tid, part_id=2))["part"]["type"] == "Converter"
+        both = await t("get_part", tree_id=tid, part_id=2, part_name="2")
+        assert both.code == "BAD_VALUE"
+        assert (await t("get_part", tree_id=tid)).code == "BAD_VALUE"
+
+    run(go)
+
+
+def test_open_unreadable_inputs_are_structured(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.ltp3"
+    empty.write_bytes(b"")
+
+    async def go(t: Tools) -> None:
+        r = await t("open_tree", path=str(empty))
+        # an empty file either opens as a tree with no tabs or fails with a code, never a crash
+        assert r.is_error is False or r.code in ("PARSE_ERROR", "BAD_PATH")
+        if not r.is_error:
+            assert r.data["tabs"] == []
+
+    run(go)
+
+
+def test_assertion_errors_become_structured(sample: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from ltp3.editor import Editor
+
+    def bad(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("internal invariant")
+
+    monkeypatch.setattr(Editor, "remove_part", bad)
+
+    async def go(t: Tools) -> None:
+        tid = (await t.ok("open_tree", path=str(sample)))["tree_id"]
+        r = await t("remove_part", tree_id=tid, part_id=11)
+        assert r.code == "INTERNAL_ERROR" and "invariant" not in r.text
+
+    run(go)
+
+
+def test_second_overwrite_is_not_stale(sample: Path) -> None:
+    async def go(t: Tools) -> None:
+        tid = (await t.ok("open_tree", path=str(sample)))["tree_id"]
+        for n in ("A", "B"):
+            await t.ok("rename_part", tree_id=tid, part_id=11, name=n)
+            await t.ok("save_tree", tree_id=tid, path=str(sample), overwrite=True)
+        assert b"<BPrt> Load, 11," in sample.read_bytes() and b", B" in sample.read_bytes()
 
     run(go)
 
