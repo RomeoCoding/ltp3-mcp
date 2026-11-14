@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from ltp3.editor import Editor, changed_lines
 
 from ltp3 import errors
+from ltp3.editor import Editor, changed_lines
 from ltp3.errors import Ltp3Error
 from ltp3.graph import build_graph
 from ltp3.lossless import parse, serialize
@@ -28,17 +28,17 @@ def _corpus_names() -> list[str]:
 # ------------------------------------------------------------------ shared invariants
 
 
-def assert_invariants(data: bytes) -> Tree:
+def assert_invariants(data: bytes, baseline: bytes | None = None) -> Tree:
     """FORMAT.md section 5 invariants on every tab of `data`; returns the re-parsed tree."""
     doc = parse(data)
     doc.check()
     tree = Tree(doc)
     for tab in tree.tabs:
-        _tab_invariants(tab)
+        _tab_invariants(tab, _crowded(baseline))
     return tree
 
 
-def _tab_invariants(tab: Tab) -> None:
+def _tab_invariants(tab: Tab, crowded: frozenset[tuple[int, str, int]] = frozenset()) -> None:
     pids = [p.id for p in tab.parts]
     assert len(pids) == len(set(pids)), "duplicate part ids"
     by_id: dict[int, list[int]] = {}
@@ -69,7 +69,7 @@ def _tab_invariants(tab: Tab) -> None:
                             ok = True
                 assert ok, f"wire {w.id} lists {other_id} but not reciprocally at {point}"
     for end, count in per_terminal.items():
-        if end[1] in ("Input", "Output"):
+        if end[1] in ("Input", "Output") and end not in crowded:
             assert count == 1, f"terminal {end} carries {count} wires"
 
 
@@ -529,7 +529,7 @@ def test_fuzz_add_load_and_connect(name: str) -> None:
     assert load.id not in [p.id for p in tab0.parts]
     ed.connect(src.ref, f"{load.id}:Input:1")
     after = ed.serialize()
-    tree = assert_invariants(after)
+    tree = assert_invariants(after, data)
     tab = tree.tabs[0]
     assert len(tab.parts) == n_parts + 1
     g = build_graph(tab)
@@ -542,6 +542,28 @@ def test_fuzz_add_load_and_connect(name: str) -> None:
     assert [b.head.args for t in tree.tabs[1:] for b in t.blocks] == [
         b.head.args for t in Tree.from_bytes(data).tabs[1:] for b in t.blocks
     ]
+    # a second sink on the same output joins the junction made by the first
+    load2 = ed.add_part("Load", "FUZZ LOAD 2", inputs=[{"ipeak": 0.1}], near=str(src.part.id))
+    ed.connect(src.ref, f"{load2.id}:Input:1")
+    assert_invariants(ed.serialize(), data)
+    ed.remove_part(load2.id)
+    assert_invariants(ed.serialize(), data)
     # and undoing the edit restores the original bytes
     ed.remove_part(load.id)
     assert ed.serialize() == serialize(parse(data))
+
+
+def _crowded(baseline: bytes | None) -> frozenset[tuple[int, str, int]]:
+    """Input/Output terminals that already carry two wires in the unedited file (the corpus has
+    one such tab, with byte-identical duplicate wires); the edit must not add to them."""
+    if baseline is None:
+        return frozenset()
+    out: set[tuple[int, str, int]] = set()
+    for tab in Tree.from_bytes(baseline).tabs:
+        seen: dict[tuple[int, str, int], int] = {}
+        for w in tab.wires:
+            for end in (w.start, w.end):
+                if end is not None:
+                    seen[end] = seen.get(end, 0) + 1
+        out |= {e for e, c in seen.items() if c > 1}
+    return frozenset(out)
