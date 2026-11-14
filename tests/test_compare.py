@@ -79,7 +79,9 @@ def test_layout_hidden_unless_requested() -> None:
 def test_part_renamed_and_added_removed() -> None:
     renamed = _replace("<BPrt> Power, 2, 100, 100, 5V", "<BPrt> Power, 2, 100, 100, 3V3")
     d = compare_trees(_tree(), _tree(renamed))
-    assert [(c.kind, c.key, c.old, c.new) for c in d.changes] == [("part_name", "name", "5V", "3V3")]
+    assert [(c.kind, c.key, c.old, c.new) for c in d.changes] == [
+        ("part_name", "name", "5V", "3V3")
+    ]
 
     extra = [
         *_BASE[:15],
