@@ -564,11 +564,11 @@ def test_oral_header_agreement(template_paths: list[Path]) -> None:
         got: list[str] = []
         for tab in tree.tabs:
             try:
-                res = solve(build_graph(tab), SolveOptions(current_mode="nominal"))
+                res = solve(build_graph(tab), SolveOptions())  # auto: the load radio decides (O4)
             except Ltp3Error:
                 continue
             got += format_oral(res)
         if ", ".join(got) == header.strip():
             agree += 1
     print(f"ORal agreement: {agree}/{comparable}")
-    assert agree >= 150
+    assert agree >= 170

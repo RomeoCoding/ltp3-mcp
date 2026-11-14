@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal
 from typing import Any, Literal
 
+from .defaults import lookup
 from .errors import Ltp3Error
 from .graph import Net, TabGraph
 from .model import Part, Terminal
@@ -24,7 +25,9 @@ Rounding = Literal["half_up", "half_even"]
 
 _ACTIVE = ("Power", "Converter", "LDO", "Load", "Resistor")
 _PASSIVE = ("Capacitor", "Net")  # H18: carry no current
-_EFFICIENCY_MODEL_KEYS = ("MatrixA", "PeakEff", "pLossSet", "EffType")  # H12
+# H12: these select a non-manual efficiency model. PeakEff alone does not: the EffType radio
+# decides between NomEff and PeakEff (ORACLES.md), so it is read, not blocked.
+_EFFICIENCY_MODEL_KEYS = ("MatrixA", "pLossSet")
 _UNIT_PREFIX = {-3: "m", -6: "u", -9: "n", 3: "k"}
 _MAX_ITER = 200  # resistors make Iin depend on the drop it causes; the fixed point converges fast
 _TOL = 1e-15
@@ -161,8 +164,9 @@ class _Notes:
         self.items: dict[str, Note] = {}
         self.warnings: list[Warn] = []
 
-    def add(self, code: str, message: str, part: int | None = None) -> None:
-        note = self.items.setdefault(code, Note(code, message))
+    def add(self, code: str, message: str, part: int | None = None, tag: str = "") -> None:
+        # `tag` keeps one note per key for codes that name a key (A-DEFAULT)
+        note = self.items.setdefault(f"{code}|{tag}", Note(code, message))
         if part is not None and part not in note.parts:
             note.parts.append(part)
 
@@ -246,6 +250,25 @@ class _Solver:
             self._block(part, "B-BAD-VALUE", f"{key} is not a number ({raw!r})")
             return None
 
+    def _val(self, part: Part, t: Terminal | Part, scope: str, key: str) -> float | None:
+        """Number from the file, else the GUI default, recorded as `A-DEFAULT` naming the key."""
+        raw, defaulted = lookup(t.props, part.type, scope, key)
+        if raw is None:
+            return None
+        if defaulted:
+            self.static.add(
+                "A-DEFAULT",
+                f"{part.type}.{key} is omitted in the file; the GUI default {raw} is used "
+                "(omitted keys equal the app default)",
+                part.id,
+                tag=f"{part.type}.{key}",
+            )
+        try:
+            return parse_number(raw.strip())
+        except Ltp3Error:
+            self._block(part, "B-BAD-VALUE", f"{key} is not a number ({raw!r})")
+            return None
+
     def _int(self, part: Part, t: Terminal, key: str) -> int:
         raw = t.props.get(key)
         if raw is None or not raw.strip():
@@ -307,19 +330,20 @@ class _Solver:
         for t in part.terminals:
             if t.kind != "Output":
                 continue
+            net = self.g.net_of(t)
+            # an output nobody draws from needs no voltage default: it is not part of any sum
+            loaded = net is not None and bool(self.g.consumers(net))
             out = _Out(
                 t,
                 t.n,
-                self._num(part, t, "Vout"),
-                self._num(part, t, "NomEff"),
+                self._vout(part, t, loaded),
+                None,
                 self._num(part, t, "IoutMax"),
                 self._num(part, t, "Dropout"),
             )
             spec.outs.append(out)
             if part.type == "Converter":
-                self._check_efficiency(part, t, out)
-            if part.type == "LDO" and out.vout is None:
-                self._block(part, "B-NO-VOLTAGE", "LDO output has no Vout")
+                self._check_efficiency(part, t, out, loaded)
         if part.type == "LDO" and part.props.get("Ignd") is not None:
             self._block(
                 part, "B-LDO-GROUND-CURRENT", "Ignd (ground current) has no known unit (H8)"
@@ -328,11 +352,8 @@ class _Solver:
             self.static.add("A-LDO", "LDO: Iin = Iout, Pin = Vin*Iin (H7, unconfirmed)", part.id)
         if part.type == "Resistor":
             spec.ploss_max = self._num(part, part, "PLossMax")
-            raw = part.props.get("Resstnce")
-            if raw is None or not raw.strip():
-                self._block(part, "B-NO-RESISTANCE", "resistor has no Resstnce")
-            else:
-                spec.resistance = self._num(part, part, "Resstnce")
+            # a missing Resstnce is the GUI default, 0 ohm (ORACLES.md), not "unknown"
+            spec.resistance = self._val(part, part, "Part", "Resstnce")
             if part not in self.unsupported_parts:
                 self.static.add(
                     "A-RESISTOR", "Resistor: Vout = Vin - R*I, Ploss = I^2*R (H10)", part.id
@@ -341,22 +362,37 @@ class _Solver:
             self._check_cascade(part, spec)
         return spec
 
-    def _check_efficiency(self, part: Part, t: Terminal, out: _Out) -> None:
+    def _vout(self, part: Part, t: Terminal, loaded: bool) -> float | None:
+        if loaded or "Vout" in t.props:
+            return self._val(part, t, "Output", "Vout")
+        return None
+
+    def _check_efficiency(self, part: Part, t: Terminal, out: _Out, loaded: bool) -> None:
         if any(t.props.get(k) is not None for k in _EFFICIENCY_MODEL_KEYS):
             self._block(
                 part,
                 "B-EFFICIENCY-MODEL",
-                "MatrixA/PeakEff/pLossSet/EffType select an unknown efficiency model (H12)",
+                "MatrixA/pLossSet select an unknown efficiency model (H12)",
             )
             return
-        net = self.g.net_of(t)
-        loaded = net is not None and bool(self.g.consumers(net))
-        if out.nom_eff is None:
-            # an output nobody draws from needs no efficiency; a loaded one does (H11)
-            if loaded:
-                self._block(part, "B-NO-EFFICIENCY", "converter output has no NomEff (H11)")
-        elif out.nom_eff <= 0:
-            self._block(part, "B-BAD-VALUE", "NomEff must be positive")
+        # EffType is the Nom/Peak radio. Like LoadType (oracle O4) it writes only its non-default
+        # position, so `True` = peak is a hypothesis with one corpus use.
+        eff_type = (t.props.get("EffType") or "").strip().lower()
+        if eff_type not in ("", "false", "true"):
+            self._block(part, "B-EFFICIENCY-MODEL", f"EffType {eff_type!r} is unknown (H12)")
+            return
+        if not loaded:
+            return  # Iout = 0 so Pin = 0 under any manual efficiency
+        key = "PeakEff" if eff_type == "true" else "NomEff"
+        if key == "PeakEff":
+            self.static.add(
+                "A-EFF-RADIO",
+                "EffType True is read as Eff Peak selected (H12, unconfirmed)",
+                part.id,
+            )
+        out.nom_eff = self._val(part, t, "Output", key)
+        if out.nom_eff is not None and out.nom_eff <= 0:
+            self._block(part, "B-BAD-VALUE", f"{key} must be positive")
 
     def _check_cascade(self, part: Part, spec: _Spec) -> None:
         net = self.g.net_of(spec.inp) if spec.inp is not None else None
@@ -374,46 +410,31 @@ class _Solver:
             if t.kind != "Input":
                 continue
             net = self.g.net_of(t)
-            ipk = self._num(part, t, "Ipeak")
-            inom = self._num(part, t, "Inom")
-            kpk = self._int(part, t, "IpeakU")
-            knom = self._int(part, t, "InomU")
-            pk = None if ipk is None else _scale(ipk, kpk)
-            nom = None if inom is None else _scale(inom, knom)
-            mode = self.opt.current_mode
-            use_nom = (mode == "nominal" and nom is not None) or (pk is None and nom is not None)
-            if use_nom:
-                value, exp, amps = inom, knom, nom
-            else:
-                value, exp, amps = ipk, kpk, pk
-            spec = _LoadSpec(part, t, amps or 0.0, value, exp)
             lt = (t.props.get("LoadType") or "").strip().lower()
-            if lt not in ("", "false"):
+            # Oracle O4: the INominal/IPeak radio writes `LoadType : False` for INominal and
+            # nothing for the default, IPeak. `True` is never written; read it as IPeak.
+            radio_nom = lt == "false"
+            mode = self.opt.current_mode
+            use_nom = mode == "nominal" or (mode == "auto" and radio_nom)
+            key, ukey = ("Inom", "InomU") if use_nom else ("Ipeak", "IpeakU")
+            exp = self._int(part, t, ukey)
+            if net is None:
+                value, amps = self._num(part, t, key), 0.0  # unconnected: draws nothing
+            else:
+                value = self._val(part, t, "Input", key)
+                amps = _scale(value, exp) if value is not None else 0.0
+            spec = _LoadSpec(part, t, amps, value, exp)
+            if lt not in ("", "false", "true"):
                 spec.blocked = "B-LOAD-TYPE"
                 self._block(part, "B-LOAD-TYPE", f"LoadType {lt!r} changes the load model (H20)")
             self.loads.append(spec)
             if net is None:
                 self.static.warn("W-UNCONNECTED", "load input is not connected", part.id)
                 continue
-            if amps is None:
-                self.static.warn("W-NO-CURRENT", "load has neither Ipeak nor Inom", part.id)
-                continue
-            if mode == "auto" and pk is not None and nom is not None and pk != nom:
-                self.static.add(
-                    "A-CURRENT-MODE",
-                    "Load has Ipeak and Inom; auto uses Ipeak, the app's choice is unknown (H5)",
-                    part.id,
-                )
-            if pk is not None and nom is None and not use_nom:
+            if not use_nom and not (t.props.get("Inom") or "").strip():
                 self.static.add(
                     "A-CURRENT-PEAK-ONLY",
                     "No Inom, so the load current is Ipeak (confirmed on the Artix-7 oracle)",
-                    part.id,
-                )
-            if pk is None and nom is not None:
-                self.static.add(
-                    "A-CURRENT-FALLBACK",
-                    "No Ipeak, so the load current is Inom (unconfirmed)",
                     part.id,
                 )
 
@@ -731,8 +752,8 @@ class _Solver:
     ) -> SolveResult:
         tab = self.g.tab
         assumed: set[int] = set()
-        for code, note in self.static.items.items():
-            if code.startswith("A-") and code != "A-CURRENT-PEAK-ONLY":
+        for note in self.static.items.values():
+            if note.code.startswith("A-") and note.code != "A-CURRENT-PEAK-ONLY":
                 assumed.update(note.parts)
         parts = [res[p] for p in tab.parts if p in res]
         for pr in parts:
@@ -740,10 +761,11 @@ class _Solver:
                 pr.status = "assumed"
         merged = _Notes()
         for src in (self.static, notes):
-            for n in src.items.values():
-                merged.add(n.code, n.message)
+            for key, n in src.items.items():
+                tag = key.split("|", 1)[1]
+                merged.add(n.code, n.message, tag=tag)
                 for pid in n.parts:
-                    merged.add(n.code, n.message, pid)
+                    merged.add(n.code, n.message, pid, tag=tag)
             merged.warnings.extend(src.warnings)
         blocked = [n for n in merged.sorted() if n.code.startswith("B-")]
         assumptions = [n for n in merged.sorted() if n.code.startswith("A-")]
