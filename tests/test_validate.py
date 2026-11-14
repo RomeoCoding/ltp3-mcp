@@ -6,8 +6,8 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
-from conftest import corpus_names
 
+from conftest import corpus_names
 from ltp3 import errors
 from ltp3.errors import Ltp3Error
 from ltp3.lossless import parse
@@ -30,8 +30,10 @@ def part(
         "\tWidth   : 100",
         "\tHeight  : 60",
     ]
-    for i, (term, props) in enumerate(terms, 1):
-        out.append(f"<Term> {term}, {i}")
+    counts: Counter[str] = Counter()
+    for term, props in terms:
+        counts[term] += 1  # numbering restarts per kind (FORMAT.md 3.2)
+        out.append(f"<Term> {term}, {counts[term]}")
         out += [f"\t{k:<8}: {v}" for k, v in (p.split("=", 1) for p in props)]
     return out
 

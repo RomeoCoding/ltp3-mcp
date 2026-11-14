@@ -7,14 +7,14 @@ import os
 from pathlib import Path
 
 import pytest
-from conftest import corpus_names
-from test_validate import CONV, LOAD, POWER, W_CL, W_PC, doc
 
+from conftest import corpus_names
 from ltp3 import errors, safeio
 from ltp3.errors import Ltp3Error
 from ltp3.lossless import Document, parse
 from ltp3.model import Tree
 from ltp3.safeio import load, save
+from test_validate import CONV, LOAD, POWER, W_CL, W_PC, doc
 
 
 @pytest.fixture(autouse=True)
@@ -76,7 +76,9 @@ def test_one_edit_changes_exactly_one_line(tmp_path: Path) -> None:
 
 
 def test_bom_and_lone_cr_survive(tmp_path: Path) -> None:
-    raw = b"\xef\xbb\xbf" + _bytes().replace(b"\tVout    : 12", b"\tComments: a\r\r\n\tVout    : 12")
+    raw = b"\xef\xbb\xbf" + _bytes().replace(
+        b"\tVout    : 12", b"\tComments: a\r\r\n\tVout    : 12"
+    )
     src = tmp_path / "bom.ltp3"
     src.write_bytes(raw)
     save(load(src).tree, tmp_path / "out.ltp3")
@@ -158,7 +160,7 @@ def test_refuses_ltp3t_target(tmp_path: Path) -> None:
 
 
 def test_refuses_program_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+    pf = os.environ.get("PROGRAMFILES", r"C:\Program Files")
     monkeypatch.setenv("LTP3_ALLOWED_DIRS", pf)  # even if allow-listed, the install tree wins
     with pytest.raises(Ltp3Error) as exc:
         save(load(_src(tmp_path)).tree, Path(pf) / "ltp3-test" / "x.ltp3")
