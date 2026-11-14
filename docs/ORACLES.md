@@ -37,3 +37,14 @@ Implications:
 - Peak vs nominal load current (H5) is decided by the load's radio button. Its key is still unknown (candidate: `LoadType`, 712 occurrences). O4 = toggle the radio, save, diff.
 - Power voltage depends on the radio. A source with only VoutMin/VoutMax has Typ = the 12 V default unless the radio picks Min or Max.
 - A missing `Resstnce` means 0 Ω, not "blocked".
+
+## GUI round-trip of editor output (P4), 2026-11-14
+All three files in `samples/generated/` open in LTpowerPlanner 3.6.8 without errors, and Calculate runs. Our solver matches the app's summary on all 12 values:
+
+| File | Pin | Pout | Ploss | Eff |
+|---|---|---|---|---|
+| artix7_dual_converter | 18.94 | 16.66 | 2.28 | 87.96 % |
+| artix7_plus_ldo_load | 18.17 | 15.24 | 2.93 | 83.85 % |
+| artix7_split_output | 17.19 | 15.15 | 2.04 | 88.15 % |
+
+O4 (load current radio): with the radio on INominal the file has `LoadType: False`; a fresh load (radio on IPeak) has no LoadType line.
