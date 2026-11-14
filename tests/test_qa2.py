@@ -21,8 +21,7 @@ from ltp3.numfmt import parse as parse_number
 from ltp3.safeio import load, save
 from ltp3.solver import SolveOptions, solve
 from ltp3.validate import validate
-
-from test_solver import build, buck, chain_5v_buck_load, ldo, source
+from test_solver import buck, build, chain_5v_buck_load, ldo, source
 from test_solver import load as mk_load
 
 
@@ -119,7 +118,7 @@ def test_fuzz_remove_every_wired_capacitor_and_net(template_paths: list[Path]) -
                 except Ltp3Error:
                     clean_errors += 1
                     continue
-                except Exception as exc:  # noqa: BLE001 - the point of the test
+                except Exception as exc:
                     failures.append(f"{tag}: {type(exc).__name__} {exc}")
                     continue
                 out = ed.serialize()
@@ -419,3 +418,19 @@ def test_unit_exp_without_current_is_rejected(sample: bytes) -> None:
         ed.add_part("Load", "L", inputs=[{"unit_exp": -3}])
     assert exc.value.code == errors.BAD_VALUE
     assert ed.serialize() == sample
+
+
+def test_several_capacitors_on_one_rail(sample: bytes) -> None:
+    ed = Editor.from_bytes(sample)
+    pw = ed.add_part("Power", "P9", outputs=[{"vout": 5}])
+    caps = [ed.add_part("Capacitor", f"C{i}") for i in range(3)]
+    for c in caps:  # first one: an unwired Output (plain wire); next ones: split, then junction
+        ed.connect(f"{pw.id}:Output:1", f"{c.id}:Aux:1")
+    out = ed.serialize()
+    assert _errors(out) == []
+    tab = Tree.from_bytes(out).tabs[0]
+    g = build_graph(tab)
+    net = g.net_of(tab.terminal(f"{pw.id}:Output:1"))
+    assert net is not None
+    assert {t.ref for t in g.passives(net)} == {f"{c.id}:Aux:1" for c in caps}
+    assert netid_partition(tab) == link_partition(tab)

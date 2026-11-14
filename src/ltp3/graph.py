@@ -63,6 +63,19 @@ def _partition(uf: _UnionFind, tab: Tab) -> Partition:
     return frozenset(frozenset(g) for g in groups.values())
 
 
+def link_components(tab: Tab) -> list[list[int]]:
+    """Wire indices grouped by SWires/EWires links, in file order (first wire of each group first).
+
+    Index-based, so a repeated wire id cannot merge two groups the links keep apart."""
+    uf = _UnionFind(len(tab.wires))
+    for a, b in _link_edges(tab, _wire_ids(tab))[0]:
+        uf.union(a, b)
+    groups: dict[int, list[int]] = {}
+    for i in range(len(tab.wires)):
+        groups.setdefault(uf.find(i), []).append(i)
+    return [groups[root] for root in sorted(groups)]
+
+
 def netid_partition(tab: Tab) -> Partition:
     """Wire ids grouped by shared netId."""
     uf = _UnionFind(len(tab.wires))

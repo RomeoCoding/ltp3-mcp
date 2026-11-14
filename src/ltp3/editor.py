@@ -27,7 +27,7 @@ from .errors import (
     UNKNOWN_TAB,
     Ltp3Error,
 )
-from .graph import build_graph
+from .graph import build_graph, link_components
 from .layout import Point
 from .lossless import Block, Document, PropLine, TagLine, parse, serialize, split_args
 from .model import Part, Tab, Terminal, Tree, Wire
@@ -91,6 +91,11 @@ _COLOR_KEYS = frozenset({"Color", "FontColr", "WireClr"})
 _BOOL_KEYS = frozenset({"ComAsLbl", "LoadType", "EffType"})
 _NEWLINE_KEYS = frozenset({"Comments", "Title"})  # the only keys whose text may hold a line break
 _COLOR = re.compile(r"#[0-9A-Fa-f]{8}")
+_KEY = re.compile(r"[A-Za-z][A-Za-z0-9]{0,7}")  # FORMAT.md 1: keys are <= 8 chars, one word
+_PROTECTED_KEYS = frozenset({"Width", "Height", "Color"})  # every part has them (FORMAT.md 3.1)
+# the corpus only holds -3 (FORMAT.md 3.2); amperes, milliamperes and microamperes are the
+# units a GUI current field offers, so 0 and -6 are accepted too (H6, unconfirmed)
+_UNIT_EXPONENTS = frozenset({0, -3, -6})
 
 
 def keys_in_canonical_order(owner: str, kind: str | None, keys: Sequence[str]) -> bool:
@@ -180,9 +185,16 @@ def normalise_value(key: str, value: object) -> str:
         n = _as_number(key, value)
         if n != int(n):
             raise _bad(f"{key}: expected an integer, got {value!r}")
+        if key in ("Width", "Height") and n <= 0:
+            raise _bad(f"{key}: must be positive, got {value!r}")  # a zero-size part vanishes
+        if key in ("InomU", "IpeakU") and int(n) not in _UNIT_EXPONENTS:
+            raise _bad(f"{key}: expected one of {sorted(_UNIT_EXPONENTS)}, got {value!r}")
         return str(int(n))
     if key in _DECIMAL_KEYS:
-        return fmt(_as_number(key, value))
+        n = _as_number(key, value)
+        if key in ("NomEff", "PeakEff") and not 0 < n <= 100:
+            raise _bad(f"{key}: an efficiency is a percentage in (0, 100], got {value!r}")
+        return fmt(n)
     if key in _COLOR_KEYS:
         if not isinstance(value, str) or not _COLOR.fullmatch(value):
             raise _bad(f"{key}: expected #AARRGGBB, got {value!r}")
@@ -464,6 +476,13 @@ class Editor:
         """Set, add (`value` given) or remove (`value=None`) one property of a part or terminal.
         Returns `(old, new)` as stored text. Setting an equal value changes nothing."""
         ti = self._tab_index(tab)
+        key = key.strip()
+        if not _KEY.fullmatch(key):
+            # anything else writes a line the reader cannot split back into key and value
+            raise _bad(
+                f"{key!r} is not a valid property key",
+                "Keys are 1-8 letters or digits, starting with a letter.",
+            )
 
         def op() -> tuple[str | None, str | None]:
             t = self._tab(ti)
@@ -482,6 +501,10 @@ class Editor:
             existing = block.find(key)
             old = existing.value if existing is not None else None
             if value is None:
+                if term is None and key in _PROTECTED_KEYS:
+                    raise _bad(
+                        f"{key} cannot be removed", "Every part carries Color, Width and Height."
+                    )
                 if existing is not None:
                     self.doc.remove(existing)
                 return old, None
@@ -495,10 +518,24 @@ class Editor:
                 )
             if old is not None and _same_value(old, new):
                 return old, old
+            if term is None and key in ("Width", "Height"):
+                self._check_resize(t, part, key)
             _put(self.doc, block.head, key, new, order)
             return old, new
 
         return self._run(op)
+
+    @staticmethod
+    def _check_resize(t: Tab, part: Part, key: str) -> None:
+        """Terminal anchors derive from Width (Output, Aux x) and Height (every y); a wired part
+        would keep wire ends at the old anchors, so refuse instead of guessing a re-route."""
+        for w in _wires_at(t, part.id):
+            for end in (w.start, w.end):
+                if end is not None and end[0] == part.id and (key == "Height" or end[1] != "Input"):
+                    raise _bad(
+                        f"cannot change {key} of part {part.id}: wire {w.id} is attached to it",
+                        "Disconnect the part first, or create a new one with the size you want.",
+                    )
 
     def rename_part(self, part: int | str, name: str, tab: int | str = 0) -> tuple[str, str]:
         ti = self._tab_index(tab)
@@ -596,6 +633,9 @@ class Editor:
                 if extra:
                     raise _bad(f"unknown input field(s) {sorted(extra)} for Load")
                 vals: dict[str, str] = {}
+                if "unit_exp" in spec and not ({"inom", "ipeak"} & set(spec)):
+                    # the exponent is stored next to a current; alone it was silently dropped
+                    raise _bad("unit_exp needs an ipeak or inom value to apply to")
                 exp = spec.get("unit_exp", 0)
                 for field_name, key in (("inom", "Inom"), ("ipeak", "Ipeak")):
                     if field_name in spec:
@@ -624,8 +664,10 @@ class Editor:
         ]
         if part_number is not None:
             props.append(("PartNumb", part_number))
-        if resistance is not None:
-            props.append(("Resstnce", normalise_value("Resstnce", resistance)))
+        if ptype == "Resistor":
+            # always written: v3.6.8 writes `Resstnce: 0` itself, and an omitted key now reads as
+            # the 1 mohm default (QA2 #4), so omitting it here would change the circuit
+            props.append(("Resstnce", normalise_value("Resstnce", resistance or 0)))
         # first so that each key lands in canonical order (they are already listed in it)
         lines: list[TagLine | PropLine] = [
             TagLine("BPrt", " ", f"{ptype}, {pid}, {px}, {py}, {name}", "")
@@ -692,23 +734,25 @@ class Editor:
         _insert_after(self.doc, anchor, lines)
 
     def connect(self, source: str, sink: str, tab: int | str = 0) -> ConnectResult:
-        """Wire an Output terminal to an unwired Input terminal."""
+        """Wire an Output terminal to an unwired Input terminal, or to an unwired Aux terminal (a
+        capacitor or net label hanging on the rail)."""
         ti = self._tab_index(tab)
         return self._run(lambda: self._connect(ti, source, sink))
 
     def _connect(self, ti: int, source: str, sink: str) -> ConnectResult:
         tab = self._tab(ti)
         src, dst = tab.terminal(source), tab.terminal(sink)
-        if src.kind != "Output" or dst.kind != "Input":
+        if src.kind != "Output" or dst.kind not in ("Input", "Aux"):
             raise _bad(
-                f"connect needs an Output source and an Input sink, got {src.kind} -> {dst.kind}",
+                f"connect needs an Output source and an Input or Aux sink, got "
+                f"{src.kind} -> {dst.kind}",
                 "Fan-out is made by connecting several Inputs to the same Output.",
             )
         if _wires_at(tab, dst.part.id, dst.kind, dst.n):
             raise Ltp3Error(
                 TERMINAL_IN_USE,
                 f"{dst.ref} already carries a wire",
-                "Disconnect it first; an Input terminal takes one wire.",
+                "Disconnect it first; connect gives each sink one wire.",
             )
         graph = build_graph(tab)
         reach: set[int] = {dst.part.id}
@@ -732,7 +776,7 @@ class Editor:
             wid = base + 1  # the net id is allocated first, as the app does (wire 28 / net 27)
             pts = layout.route(layout.terminal_anchor(src), target)
             self._append_wire(
-                ti, wid, base, pts, (src.part.id, "Output", src.n), (dst.part.id, "Input", dst.n),
+                ti, wid, base, pts, (src.part.id, "Output", src.n), (dst.part.id, dst.kind, dst.n),
                 zindex, None,
             )  # fmt: skip
             return ConnectResult(base, [wid], [])
@@ -756,7 +800,7 @@ class Editor:
             pts = layout.route(j, target, first=first)
             ids = [w.id, *[m.id for m, _ in members]]
             self._append_wire(
-                ti, base, net_id, pts, ids, (dst.part.id, "Input", dst.n), zindex, clr
+                ti, base, net_id, pts, ids, (dst.part.id, dst.kind, dst.n), zindex, clr
             )
             tab = self._tab(ti)
             by_head = {x.block.head: x for x in tab.wires}
@@ -799,7 +843,7 @@ class Editor:
         else:  # the old far end was S: branch 1 ends at the junction
             self._append_wire(ti, b1, net_id, rest[::-1], far_term, [w.id, b2], zindex, clr)
         self._append_wire(
-            ti, b2, net_id, branch2, [w.id, b1], (dst.part.id, "Input", dst.n), zindex, clr
+            ti, b2, net_id, branch2, [w.id, b1], (dst.part.id, dst.kind, dst.n), zindex, clr
         )
         return ConnectResult(net_id, [b1, b2], [w.id])
 
@@ -816,10 +860,10 @@ class Editor:
         ti = self._tab_index(tab)
 
         def op() -> RemoveResult:
-            t = self._tab(ti)
-            term = t.terminal(terminal)
-            heads = [w.block.head for w in _wires_at(t, term.part.id, term.kind, term.n)]
-            return self._delete_wires(ti, heads)
+            term = self._tab(ti).terminal(terminal)
+            result = self._detach(ti, term.part.id, term.kind, term.n)
+            self._renet(ti)
+            return result
 
         return self._run(op)
 
@@ -827,15 +871,14 @@ class Editor:
         ti = self._tab_index(tab)
 
         def op() -> RemoveResult:
-            t = self._tab(ti)
-            p = t.part(part)
-            heads = [w.block.head for w in _wires_at(t, p.id)]
-            result = self._delete_wires(ti, heads)
+            p = self._tab(ti).part(part)
+            result = self._detach(ti, p.id, None, None)
             t = self._tab(ti)
             p = t.part(part)
             heads_ = [term.block.head for term in p.terminals] + [p.block.head]
             for h in heads_:
                 _remove_block(self.doc, h)
+            self._renet(ti)
             return result
 
         return self._run(op)
@@ -846,9 +889,59 @@ class Editor:
                 return w
         return None
 
-    def _delete_wires(self, ti: int, heads: list[TagLine]) -> RemoveResult:
+    def _detach(self, ti: int, pid: int, kind: str | None, n: int | None) -> RemoveResult:
+        """Cut part `pid` (or one of its terminals) out of the wiring.
+
+        Wires on Input/Output terminals are deleted. An `Aux` terminal (capacitor, net label) is a
+        tap, not an endpoint, so the nets through it must survive (QA2 #3): at a junction the wire
+        end only loses its terminal; between exactly two bare wires the two are bridged into one.
+        """
+        t = self._tab(ti)
+        delete: list[TagLine] = []
+        drops: list[tuple[TagLine, str]] = []
+        bare: dict[tuple[str, int], list[tuple[TagLine, str]]] = {}
+        for w in _wires_at(t, pid, kind, n):
+            on_part = [
+                (side, end)
+                for side in ("S", "E")
+                if (end := _term(w, side)) is not None and end[0] == pid
+            ]
+            mine = [(side, end) for side, end in on_part if kind is None or end[1:] == (kind, n)]
+            if len(on_part) == 2 or any(end[1] != "Aux" for _, end in mine):
+                delete.append(w.block.head)
+                continue
+            side, end = mine[0]
+            if _links(w, side):
+                drops.append((w.block.head, side))
+            else:
+                bare.setdefault(end[1:], []).append((w.block.head, side))
+        bridges: list[list[tuple[TagLine, str]]] = []
+        for ends in bare.values():
+            if len(ends) == 2 and ends[0][0] is not ends[1][0]:
+                bridges.append(ends)
+            else:
+                delete += [head for head, _ in ends]  # a stub that served only this terminal
         result = RemoveResult()
         spots: list[tuple[TagLine, str]] = []
+        for head, side in drops:
+            _set_term(self.doc, head, side, None)
+            spots.append((head, side))
+        for (h1, s1), (h2, s2) in bridges:
+            w1, w2 = self._find_wire(ti, h1), self._find_wire(ti, h2)
+            if w1 is not None and w2 is not None:
+                self._merge(ti, w1, s1, w2, s2)
+                result.merged_junctions += 1
+        return self._delete_wires(ti, delete, spots, result)
+
+    def _delete_wires(
+        self,
+        ti: int,
+        heads: list[TagLine],
+        spots: list[tuple[TagLine, str]] | None = None,
+        result: RemoveResult | None = None,
+    ) -> RemoveResult:
+        result = result if result is not None else RemoveResult()
+        spots = list(spots or [])
         for head in heads:
             spots += self._delete_one(ti, head, result)
         # normalise only after every deletion, so a merge cannot absorb a wire still to be deleted
@@ -864,18 +957,38 @@ class Editor:
         w = self._find_wire(ti, head)
         if w is None:
             return []
+        wid = w.id  # read before the edits: `_set_links` shifts the block indices behind `w`
         tab = self._tab(ti)
         spots: list[tuple[TagLine, str]] = []
         edits: list[tuple[TagLine, str, list[int]]] = []
         for side in ("S", "E"):
             for pw, ps in _partners(tab, w, side):
-                edits.append((pw.block.head, ps, [i for i in _links(pw, ps) if i != w.id]))
+                edits.append((pw.block.head, ps, [i for i in _links(pw, ps) if i != wid]))
                 spots.append((pw.block.head, ps))
         for h, ps, ids_ in edits:
             _set_links(self.doc, h, ps, ids_)
-        result.removed_wires.append(w.id)
+        result.removed_wires.append(wid)
         _remove_block(self.doc, head)
         return spots
+
+    def _renet(self, ti: int) -> None:
+        """Give every link-disconnected group of wires its own netId (FORMAT.md 5: netId equals
+        the link component). Deleting a wire can split one net in two; without this both halves
+        keep one id and the graph reads them as a single net (QA2 #1)."""
+        tab = self._tab(ti)
+        by_net: dict[int, list[list[int]]] = {}
+        for comp in link_components(tab):
+            by_net.setdefault(tab.wires[comp[0]].net_id, []).append(comp)
+        fresh = _next_id(tab)
+        retag: list[tuple[TagLine, int]] = []
+        for comps in by_net.values():
+            for comp in comps[1:]:  # the first group keeps the id, the split-off ones get new ones
+                retag += [(tab.wires[i].block.head, fresh) for i in comp]
+                fresh += 1
+        for head, net in retag:
+            fields = split_args("Wire", head.args)
+            fields[1] = str(net)
+            head.args = ", ".join(fields)
 
     def _normalise(
         self, ti: int, head: TagLine, side: str, result: RemoveResult
@@ -909,7 +1022,8 @@ class Editor:
         f2 = _other(s2)
         pa = w1.points if s1 == "E" else w1.points[::-1]  # far end of w1 -> junction
         pb = w2.points if s2 == "S" else w2.points[::-1]  # junction -> far end of w2
-        merged = layout.collapse([*pa, *pb])
+        gap = layout.route(pa[-1], pb[0]) if pa[-1] != pb[0] else []  # bridged ends may differ
+        merged = layout.collapse([*pa, *gap, *pb])
         far_term = _term(w2, f2)
         far_links = _links(w2, f2)
         old_id = w2.id
