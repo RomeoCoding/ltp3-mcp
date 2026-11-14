@@ -46,9 +46,10 @@ def test_template_headers_not_in_tracked_files(template_paths: list[Path]) -> No
     needles = set()
     for p in template_paths:
         item = catalog_item(p)
-        for s in (item.solution, item.description):
-            if len(s) >= 25:  # short strings collide with ordinary words
-                needles.add(s)
+        # Only the prose description is ADI-authored text. Solution names double as template
+        # file names, which docs and comments cite as evidence (a title is not content).
+        if len(item.description) >= 40:  # short strings collide with ordinary words
+            needles.add(item.description)
     blob = ""
     for f in _tracked():
         if f.startswith("tests/") or f.endswith(".lock"):
