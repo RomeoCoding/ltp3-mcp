@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -159,6 +160,7 @@ def test_refuses_ltp3t_target(tmp_path: Path) -> None:
     assert exc.value.code == errors.BAD_PATH
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Program Files is a Windows install tree")
 def test_refuses_program_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pf = os.environ.get("PROGRAMFILES", r"C:\Program Files")
     monkeypatch.setenv("LTP3_ALLOWED_DIRS", pf)  # even if allow-listed, the install tree wins
