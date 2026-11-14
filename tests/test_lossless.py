@@ -361,3 +361,105 @@ def test_hypothesis_edit_changes_exactly_one_line(data: bytes, draw: st.DataObje
     again_line = again.lines[idx]
     # "key:" + value with no separator and a leading space re-parses as sep " ": compare bytes
     assert isinstance(again_line, PropLine) and again_line.serialize() == line.serialize()
+
+
+# ---------------------------------------------------------------- QA fixes: identity, check()
+
+_TWO_COLORS = (
+    "<Vers> 1\r\n"
+    "<BPrt> A, 1, 0, 0, a\r\n"
+    "\tColor   : #00FFFFFF\r\n"
+    "<BPrt> B, 2, 0, 0, b\r\n"
+    "\tColor   : #00FFFFFF\r\n"
+)
+
+
+def test_lines_compare_by_identity() -> None:
+    doc = parse(_TWO_COLORS.encode())
+    a, b = doc.lines[2], doc.lines[4]
+    assert a is not b and a != b
+
+
+def test_remove_matches_identity_not_value() -> None:
+    doc = parse(_TWO_COLORS.encode())
+    second = doc.blocks()[2].find("Color")
+    assert second is not None
+    doc.remove(second)
+    assert (
+        serialize(doc)
+        == (
+            "<Vers> 1\r\n<BPrt> A, 1, 0, 0, a\r\n\tColor   : #00FFFFFF\r\n<BPrt> B, 2, 0, 0, b\r\n"
+        ).encode()
+    )
+
+
+def test_remove_unknown_line_raises() -> None:
+    doc = parse(_TWO_COLORS.encode())
+    with pytest.raises(ValueError):
+        doc.remove(PropLine.new("Color", "x", "\r\n"))
+
+
+def test_insert_after_anchor_by_identity() -> None:
+    doc = parse(_TWO_COLORS.encode())
+    anchor = doc.blocks()[2].find("Color")  # the second, value-identical Color line
+    assert anchor is not None
+    doc.insert_after(anchor, PropLine.new("Width", "110", "\r\n"))
+    assert serialize(doc).endswith(
+        b"<BPrt> B, 2, 0, 0, b\r\n\tColor   : #00FFFFFF\r\n\tWidth   : 110\r\n"
+    )
+    assert serialize(doc).count(b"Width") == 1
+
+
+def test_propline_new_pads_key_to_eight() -> None:
+    assert PropLine.new("Vout", "5", "\r\n").serialize() == "\tVout    : 5\r\n"
+    assert PropLine.new("Resstnce", "1", "\n").serialize() == "\tResstnce: 1\n"
+    assert PropLine.new("PartNumb", "x", "\r\n").key == "PartNumb"
+
+
+def test_blocks_expose_indices_into_doc_lines() -> None:
+    doc = parse(_TWO_COLORS.encode())
+    for blk in doc.blocks():
+        assert doc.lines[blk.start] is blk.head
+        assert doc.lines[blk.start + 1 : blk.end] == blk.body
+        assert all(x is y for x, y in zip(doc.lines[blk.start + 1 : blk.end], blk.body))
+    assert doc.blocks()[-1].end == len(doc.lines)
+
+
+def test_serialize_unencodable_value_raises_bad_value() -> None:
+    doc = parse("<Vers> 1\r\n<Note> caf\xe9\r\n".encode("cp1252"))
+    assert doc.encoding == "cp1252"
+    note = doc.lines[1]
+    assert isinstance(note, TagLine)
+    note.args = "\u03bc"
+    with pytest.raises(Ltp3Error) as ei:
+        serialize(doc)
+    assert ei.value.code == errors.BAD_VALUE
+    assert "cp1252" in ei.value.message
+
+
+@pytest.mark.parametrize("bad", ["a\r\nb", "a\nb", "a\r\n<Tabs> 1"])
+def test_check_rejects_newline_in_value(bad: str) -> None:
+    doc = parse(_SAMPLE_DOC.encode())
+    prop = next(line for line in doc.lines if isinstance(line, PropLine))
+    prop.value = bad
+    with pytest.raises(Ltp3Error) as ei:
+        doc.check()
+    assert ei.value.code == errors.BAD_VALUE
+
+
+def test_check_rejects_newline_in_args() -> None:
+    doc = parse(_SAMPLE_DOC.encode())
+    tag = doc.lines[0]
+    assert isinstance(tag, TagLine)
+    tag.args = "1\n<Vers> 2"
+    with pytest.raises(Ltp3Error) as ei:
+        doc.check()
+    assert ei.value.code == errors.BAD_VALUE
+
+
+def test_check_accepts_clean_and_lone_cr() -> None:
+    doc = parse(_SAMPLE_DOC.encode())
+    doc.check()
+    prop = next(line for line in doc.lines if isinstance(line, PropLine))
+    prop.value = "a\rb"  # a lone CR is data in the corpus (FORMAT.md 1), not a line break
+    doc.check()

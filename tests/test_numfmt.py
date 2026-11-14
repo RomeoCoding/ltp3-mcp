@@ -28,7 +28,7 @@ _NUMERIC = re.compile(r"-?\d+(\.\d+)?([eE][+-]?\d+)?")
         (2e-08, "2E-08"),
         (0.272727272727273, "0.272727272727273"),
         (-5.0, "-5"),
-        (-0.0, "-0"),
+        (-0.0, "0"),
         (0.0, "0"),
         (100.0, "100"),
         (123456789012345.0, "123456789012345"),
@@ -87,7 +87,9 @@ def test_parse_rejects(text: str) -> None:
 
 @pytest.mark.parametrize("value", [0.1, 0.2 + 0.1, 1 / 3, 2.5e-07, 12345.678, 1e-05, 9.99e14])
 def test_fmt_parse_roundtrip_float(value: float) -> None:
-    assert parse_number(fmt(value)) == value
+    # .NET Framework 4 keeps 15 significant digits, so the round trip is exact only to ~1e-15
+    assert math.isclose(parse_number(fmt(value)), value, rel_tol=1e-14)
+    assert fmt(parse_number(fmt(value))) == fmt(value)  # text is a fixed point
 
 
 def test_numeric_values_in_templates_survive_fmt_parse(template_paths: list[Path]) -> None:
@@ -108,3 +110,34 @@ def test_numeric_values_in_templates_survive_fmt_parse(template_paths: list[Path
     assert ratio >= 0.999, f"{len(exceptions)}/{total} numeric values do not round-trip:\n{shown}"
     if exceptions:
         print(f"numfmt exceptions ({len(exceptions)}/{total}):\n{shown}")
+
+
+# Vectors measured in PowerShell on .NET Framework 4 (CLR 4.0.30319): Double.ToString() keeps 15 digits.
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        (0.1 + 0.2, "0.3"),
+        (1 / 3, "0.333333333333333"),
+        (3.3 - 2.2 * 0.00568, "3.287504"),
+        (1.2345678901234568e17, "1.23456789012346E+17"),
+        (1e-7, "1E-07"),
+        (3.30, "3.3"),
+        (-(0.1 + 0.2), "-0.3"),
+        (2 / 3, "0.666666666666667"),
+        (999999999999999.9, "1E+15"),  # rounds up into the scientific range
+        (0.99999999999999999, "1"),
+    ],
+)
+def test_fmt_dotnet_framework_15_digits(value: float, text: str) -> None:
+    assert fmt(value) == text
+
+
+def test_fmt_negative_zero_is_plain_zero() -> None:
+    assert fmt(-0.0) == "0"
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_fmt_rejects_bool(value: bool) -> None:
+    with pytest.raises(Ltp3Error) as ei:
+        fmt(value)
+    assert ei.value.code == errors.BAD_VALUE

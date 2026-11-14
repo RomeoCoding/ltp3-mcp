@@ -173,3 +173,67 @@ def test_pins_are_exact() -> None:
     text = (ROOT / "pyproject.toml").read_text()
     for pkg in ("mcp", "pytest", "pytest-cov", "hypothesis", "ruff", "mypy", "hatchling"):
         assert re.search(rf'"{pkg}==\d+\.\d+\.\d+"', text), pkg
+
+
+# ---------------------------------------------------------------- QA fixes: path policy
+
+
+def test_allowed_roots_strips_whitespace_and_quotes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    monkeypatch.setenv("LTP3_ALLOWED_DIRS", os.pathsep.join([f' "{a}" ', f"'{b}'", ' "" ']))
+    assert paths.allowed_roots() == [a.resolve(), b.resolve()]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="NTFS streams, UNC and drive roots")
+class TestWindowsPolicy:
+    @pytest.fixture(autouse=True)
+    def _allow_all(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("LTP3_ALLOWED_DIRS", str(tmp_path) + os.pathsep + "C:\\")
+
+    @pytest.mark.parametrize("name", ["a.ltp3t:x.ltp3", "a.ltp3:stream.ltp3", "a.ltp3:$DATA.ltp3"])
+    def test_refuses_alternate_data_stream(self, tmp_path: Path, name: str) -> None:
+        with pytest.raises(Ltp3Error) as ei:
+            paths.check_writable(str(tmp_path / name))
+        assert ei.value.code == errors.BAD_PATH
+
+    def test_refuses_stream_on_directory_component(self, tmp_path: Path) -> None:
+        with pytest.raises(Ltp3Error) as ei:
+            paths.check_writable(str(tmp_path / "d:s" / "x.ltp3"))
+        assert ei.value.code == errors.BAD_PATH
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            r"\server\share\x.ltp3",
+            "//server/share/x.ltp3",
+            r"\?\C:\Users\Public\x.ltp3",
+            r"\.\C:\x.ltp3",
+        ],
+    )
+    def test_refuses_unc_and_extended_prefix(self, raw: str) -> None:
+        with pytest.raises(Ltp3Error) as ei:
+            paths.check_writable(raw)
+        assert ei.value.code == errors.BAD_PATH
+
+    @pytest.mark.parametrize("target", [r"C:\Windows\Temp\x.ltp3", r"C:\ProgramData\x\y.ltp3"])
+    def test_refuses_windows_and_programdata(
+        self, monkeypatch: pytest.MonkeyPatch, target: str
+    ) -> None:
+        for var in ("SystemRoot", "windir", "ProgramData"):
+            monkeypatch.delenv(var, raising=False)  # the literal fallback must still deny
+        with pytest.raises(Ltp3Error) as ei:
+            paths.check_writable(target)
+        assert ei.value.code == errors.PATH_NOT_ALLOWED
+
+    def test_refuses_programw6432(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        pf = tmp_path / "PF64"
+        pf.mkdir()
+        monkeypatch.setenv("ProgramW6432", str(pf))
+        with pytest.raises(Ltp3Error) as ei:
+            paths.check_writable(pf / "V" / "x.ltp3")
+        assert ei.value.code == errors.PATH_NOT_ALLOWED
