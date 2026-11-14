@@ -23,7 +23,9 @@ def template_dir() -> Path:
 def allowed_roots() -> list[Path]:
     """Directories the server may write under; default is the working directory only."""
     raw = os.environ.get(ENV_ALLOWED_DIRS, "")
-    roots = [Path(p).resolve() for p in raw.split(os.pathsep) if p.strip()]
+    # entries are often pasted with quotes or padding (`"C:\my dir" ; D:\x`); strip both
+    cleaned = (p.strip().strip("\"'").strip() for p in raw.split(os.pathsep))
+    roots = [Path(p).resolve() for p in cleaned if p]
     return roots or [Path.cwd().resolve()]
 
 
@@ -36,10 +38,20 @@ def _adi_roots() -> list[Path]:
             roots.append(parent)
             break
     # Windows only: refuse anything under Program Files, where the install lives
-    for var in ("ProgramFiles", "ProgramFiles(x86)"):
+    # ProgramW6432 is the 64-bit Program Files seen from a 32-bit process; the C:\ literals cover
+    # an unset or spoofed environment, and ProgramData/Windows hold machine-wide shared state.
+    for var in (
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramW6432",
+        "ProgramData",
+        "SystemRoot",
+        "windir",
+    ):
         value = os.environ.get(var)
         if value:
             roots.append(Path(value).resolve())
+    roots.extend(Path(lit).resolve() for lit in (r"C:\Windows", r"C:\ProgramData"))
     return roots
 
 
@@ -56,7 +68,26 @@ def check_writable(path: str | os.PathLike[str]) -> Path:
     Rules: only `.ltp3` (templates are read-only), never inside the ADI install tree, and only
     inside `allowed_roots()`.
     """
-    target = Path(path).resolve()
+    raw = os.fspath(path)
+    # UNC and extended/device prefixes dodge the string-based install-tree check and hit the network
+    if raw.startswith(("\\\\", "//")):
+        raise Ltp3Error(
+            BAD_PATH,
+            f"UNC and device paths are not accepted: {raw!r}",
+            "Use a local drive path such as C:/Users/you/out.ltp3.",
+        )
+    # ':' after the drive letter marks an NTFS alternate data stream (`a.ltp3t:x.ltp3`)
+    candidate = Path(raw)
+    names = candidate.parts[1:] if candidate.anchor else candidate.parts
+    if any(":" in part for part in names):
+        raise Ltp3Error(
+            BAD_PATH,
+            f"':' is not allowed in a file or folder name (NTFS stream syntax): {raw!r}",
+            "Remove the ':' from the name.",
+        )
+    target = Path(raw).resolve()
+    if str(target).startswith("\\\\"):  # a mapped drive can resolve to a UNC path
+        raise Ltp3Error(BAD_PATH, f"UNC and device paths are not accepted: {str(target)!r}")
     if target.suffix.lower() != ".ltp3":
         raise Ltp3Error(
             BAD_PATH,

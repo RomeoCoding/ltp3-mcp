@@ -92,8 +92,9 @@ The Document is the single source of truth. Nothing above it keeps a second copy
     text after `:` (normally one space).
   - `RawLine(text, eol)` — anything matching neither grammar. None exist in the corpus; this keeps
     future versions lossless instead of failing.
-- Split on `\r\n` only and store `eol` per line. *Why:* a lone `\r` is data in 7 files, and per-line
-  `eol` keeps a file that was LF-mangled by git still round-trippable.
+- Split on `\r\n`; the code also ends a line on a bare LF (a lone `\r` never does), and stores `eol`
+  per line so output is byte-exact. *Why:* a lone `\r` is data in 7 files, and per-line `eol` keeps
+  a file that was LF-mangled by git still round-trippable.
 - Decode strict UTF-8; on failure fall back to `cp1252` and record it in `encoding`.
 - `serialize()` concatenates raw pieces. No normalisation, ever. Edits replace individual pieces.
 - A block view groups a `TagLine` with its following `PropLine`s. `Term` blocks attach to the

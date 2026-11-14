@@ -14,7 +14,7 @@ Counts are corpus totals (261 files, 2,433,847 bytes, 444 tabs).
   always the last character of a `Comments` value (`...Amplifier\r\r\n`). Split on `\r\n` only.
 - **[C]** Trailing whitespace is significant: `<Note> `, `<Desn> `, `\tTitle   : ` (159×), part
   names and `PartNumb` values with trailing or leading padding (`PartNumb: LTC3877     `).
-- **[C]** Exactly two line shapes exist (79,556 property lines, 25,459 tag lines, nothing else):
+- **[C]** Exactly two line shapes exist (79,556 property lines, 25,460 tag lines, nothing else):
   - tag line, column 0: `<Tag>` + optional ` args`. The space is absent when args are absent
     (`<DS05>`) and absent in `<DS11>0.272727272727273`; it is present with empty args in `<Note> `.
   - property line: TAB + key padded with spaces to 8 chars + `:` + space + value

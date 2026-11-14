@@ -385,11 +385,8 @@ def test_remove_matches_identity_not_value() -> None:
     second = doc.blocks()[2].find("Color")
     assert second is not None
     doc.remove(second)
-    assert (
-        serialize(doc)
-        == (
-            "<Vers> 1\r\n<BPrt> A, 1, 0, 0, a\r\n\tColor   : #00FFFFFF\r\n<BPrt> B, 2, 0, 0, b\r\n"
-        ).encode()
+    assert serialize(doc) == (
+        b"<Vers> 1\r\n<BPrt> A, 1, 0, 0, a\r\n\tColor   : #00FFFFFF\r\n<BPrt> B, 2, 0, 0, b\r\n"
     )
 
 
@@ -421,7 +418,9 @@ def test_blocks_expose_indices_into_doc_lines() -> None:
     for blk in doc.blocks():
         assert doc.lines[blk.start] is blk.head
         assert doc.lines[blk.start + 1 : blk.end] == blk.body
-        assert all(x is y for x, y in zip(doc.lines[blk.start + 1 : blk.end], blk.body))
+        assert all(
+            x is y for x, y in zip(doc.lines[blk.start + 1 : blk.end], blk.body, strict=True)
+        )
     assert doc.blocks()[-1].end == len(doc.lines)
 
 

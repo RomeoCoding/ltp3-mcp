@@ -5,12 +5,12 @@ import re
 from pathlib import Path
 
 import pytest
-from ltp3.lossless import PropLine, parse
-from ltp3.numfmt import fmt
-from ltp3.numfmt import parse as parse_number
 
 from ltp3 import errors
 from ltp3.errors import Ltp3Error
+from ltp3.lossless import PropLine, parse
+from ltp3.numfmt import fmt
+from ltp3.numfmt import parse as parse_number
 
 # keys whose values are free text or enumerations, not .NET-formatted doubles
 _TEXT_KEYS = {"PartNumb", "Comments", "Title", "CadPath", "Dash"}
@@ -112,7 +112,7 @@ def test_numeric_values_in_templates_survive_fmt_parse(template_paths: list[Path
         print(f"numfmt exceptions ({len(exceptions)}/{total}):\n{shown}")
 
 
-# Vectors measured in PowerShell on .NET Framework 4 (CLR 4.0.30319): Double.ToString() keeps 15 digits.
+# Vectors measured in PowerShell on .NET Framework 4 (CLR 4.0.30319): 15 significant digits.
 @pytest.mark.parametrize(
     ("value", "text"),
     [

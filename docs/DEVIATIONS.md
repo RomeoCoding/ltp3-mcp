@@ -59,3 +59,22 @@ Each entry: what the plan said, what was done, why.
 5. Test correction: the Artix-7 sample has 10 symbols (3 labels + 1 label + 1 rect + 1 label + 4
    rects), not 9 as first written in `test_model.py`; fixed before the implementation commit.
    PLAN.md gives no symbol count.
+
+## QA fixes on P0/P1
+
+1. `numfmt.fmt` now emits 15 significant digits like .NET Framework 4, not the shortest round-trip
+   form. Consequence: `parse(fmt(x)) == x` no longer holds exactly (0.1+0.2 -> "0.3"); the
+   round-trip test checks relative error 1e-14 and that the text is a fixed point. `-0.0` -> "0"
+   (was "-0"). `bool` is rejected with BAD_VALUE. The E-notation thresholds are unchanged.
+2. `Block` is now `(doc, start, end)`; `head`/`body` are properties over `doc.lines`, so `body` is a
+   fresh slice of live line objects, and indices go stale after `insert_after`/`remove`. Line
+   classes use `eq=False` (identity). P2 (model/graph) needed no change.
+3. `serialize` raises `Ltp3Error(BAD_VALUE)` on unencodable text. `Document.check()` compares line
+   count and line types after re-parse; a lone CR is allowed because it is data in the corpus.
+4. `check_writable` raises BAD_PATH (not PATH_NOT_ALLOWED) for UNC and extended-prefix targets and
+   for `:` in any path component after the drive. The deny list adds ProgramW6432, ProgramData,
+   SystemRoot, windir and the literals C:/Windows and C:/ProgramData. `LTP3_ALLOWED_DIRS` entries
+   are stripped of whitespace and quotes.
+5. `split_args`: removed the `", ".join(pieces) != args` check (a tautology after `str.split`).
+6. Docs: FORMAT.md tag-line count corrected to 25,460 (matches P1 deviation 1); PLAN.md 2.1 says a
+   bare LF also ends a line.

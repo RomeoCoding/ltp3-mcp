@@ -203,16 +203,17 @@ class TestWindowsPolicy:
 
     def test_refuses_stream_on_directory_component(self, tmp_path: Path) -> None:
         with pytest.raises(Ltp3Error) as ei:
-            paths.check_writable(str(tmp_path / "d:s" / "x.ltp3"))
+            # tmp_path / "d:s" would swap the drive, so build the string by hand
+            paths.check_writable(f"{tmp_path}\\d:s\\x.ltp3")
         assert ei.value.code == errors.BAD_PATH
 
     @pytest.mark.parametrize(
         "raw",
         [
-            r"\server\share\x.ltp3",
+            "\\\\server\\share\\x.ltp3",
             "//server/share/x.ltp3",
-            r"\?\C:\Users\Public\x.ltp3",
-            r"\.\C:\x.ltp3",
+            "\\\\?\\C:\\Users\\Public\\x.ltp3",
+            "\\\\.\\C:\\x.ltp3",
         ],
     )
     def test_refuses_unc_and_extended_prefix(self, raw: str) -> None:

@@ -5,9 +5,9 @@ exact. Nothing here interprets values; edits replace individual pieces.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from .errors import UNPARSEABLE_ARGS, Ltp3Error
+from .errors import BAD_VALUE, UNPARSEABLE_ARGS, Ltp3Error
 
 _BOM = b"\xef\xbb\xbf"
 
@@ -22,7 +22,8 @@ _ARG_PIECES = {"Tabs": 3, "Summ": 5, "BPrt": 5, "Term": 2, "Wire": 2, "Symb": 6}
 _FREE_TEXT_LAST = {"Tabs", "BPrt"}
 
 
-@dataclass(slots=True)
+# eq=False on the line classes: equal-valued lines in different parts must stay distinct objects
+@dataclass(slots=True, eq=False)
 class TagLine:
     """`<Tag>` + `sep` + `args`. `sep` is kept apart because `<DS11>0.27` has none while
     `<Note> ` has one with empty args."""
@@ -36,7 +37,7 @@ class TagLine:
         return f"<{self.tag}>{self.sep}{self.args}{self.eol}"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class PropLine:
     """TAB + `key_raw` (padded) + `:` + `sep` + `value`."""
 
@@ -52,8 +53,13 @@ class PropLine:
     def serialize(self) -> str:
         return f"\t{self.key_raw}:{self.sep}{self.value}{self.eol}"
 
+    @classmethod
+    def new(cls, key: str, value: str, eol: str) -> PropLine:
+        """A fresh line; the key is padded to 8 columns as the corpus does (`\tVout    : 5`)."""
+        return cls(key.ljust(8), " ", value, eol)
 
-@dataclass(slots=True)
+
+@dataclass(slots=True, eq=False)
 class RawLine:
     """Anything that is neither grammar; kept so future file versions stay lossless."""
 
@@ -67,12 +73,27 @@ class RawLine:
 Line = TagLine | PropLine | RawLine
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class Block:
-    """A tag line with the lines that follow it. `body` holds the live line objects."""
+    """A tag line and the lines after it: `doc.lines[start:end]`, `start` being the tag line.
 
-    head: TagLine
-    body: list[Line] = field(default_factory=list)
+    The indices are valid until the next `insert_after`/`remove`; call `blocks()` again after.
+    """
+
+    doc: Document
+    start: int
+    end: int
+
+    @property
+    def head(self) -> TagLine:
+        line = self.doc.lines[self.start]
+        assert isinstance(line, TagLine)
+        return line
+
+    @property
+    def body(self) -> list[Line]:
+        """The live line objects after the tag (the list itself is a fresh slice)."""
+        return self.doc.lines[self.start + 1 : self.end]
 
     @property
     def props(self) -> list[PropLine]:
@@ -97,13 +118,39 @@ class Document:
     def blocks(self) -> list[Block]:
         """Group lines into blocks. Lines before the first tag belong to no block (they stay in
         `lines`, so nothing is lost)."""
-        out: list[Block] = []
-        for line in self.lines:
-            if isinstance(line, TagLine):
-                out.append(Block(line))
-            elif out:
-                out[-1].body.append(line)
-        return out
+        starts = [i for i, line in enumerate(self.lines) if isinstance(line, TagLine)]
+        ends = [*starts[1:], len(self.lines)]
+        return [Block(self, s, e) for s, e in zip(starts, ends, strict=True)]
+
+    def _index(self, line: Line) -> int:
+        # identity scan: list.index() would use ==, and the explicit `is` keeps that guaranteed
+        for i, candidate in enumerate(self.lines):
+            if candidate is line:
+                return i
+        raise ValueError("line is not part of this document")
+
+    def insert_after(self, anchor: Line, new: Line) -> None:
+        """Insert `new` right after `anchor` (matched by identity)."""
+        self.lines.insert(self._index(anchor) + 1, new)
+
+    def remove(self, line: Line) -> None:
+        """Remove `line` (matched by identity, so an identical line elsewhere stays)."""
+        del self.lines[self._index(line)]
+
+    def check(self) -> None:
+        """Assert the document survives a write: re-parsing `serialize()` must give the same
+        number of lines with the same types. Catches values or args holding a line break, which
+        would turn into extra lines. Raises `Ltp3Error(BAD_VALUE)`."""
+        again = parse(serialize(self)).lines
+        if len(again) != len(self.lines) or any(
+            type(x) is not type(y) for x, y in zip(again, self.lines, strict=True)
+        ):
+            raise Ltp3Error(
+                BAD_VALUE,
+                f"document does not re-parse to the same lines ({len(self.lines)} lines became "
+                f"{len(again)}); a value or argument probably contains a line break",
+                "Remove CR/LF characters from the edited text.",
+            )
 
     def split_tabs(self) -> tuple[list[Block], list[list[Block]]]:
         """Header blocks, then one block list per `<Tabs>` (from `<Tabs>` to the next one)."""
@@ -159,9 +206,17 @@ def parse(data: bytes) -> Document:
 
 def serialize(doc: Document) -> bytes:
     """Concatenate the raw pieces. No normalisation."""
-    body = "".join(line.serialize() for line in doc.lines).encode(
-        doc.encoding, errors="surrogateescape"
-    )
+    text = "".join(line.serialize() for line in doc.lines)
+    try:
+        body = text.encode(doc.encoding, errors="surrogateescape")
+    except UnicodeEncodeError as exc:
+        # the file's own code page cannot hold the edit; refuse rather than corrupt or crash
+        raise Ltp3Error(
+            BAD_VALUE,
+            f"character {text[exc.start]!r} cannot be stored in this file's {doc.encoding} "
+            "encoding",
+            "Use only characters the document's encoding supports.",
+        ) from exc
     return _BOM + body if doc.bom else body
 
 
@@ -174,7 +229,8 @@ def split_args(tag: str, args: str) -> list[str]:
     if want is None:
         raise Ltp3Error(UNPARSEABLE_ARGS, f"no argument grammar for tag <{tag}>")
     pieces = args.split(", ", want - 1) if tag in _FREE_TEXT_LAST else args.split(", ")
-    if len(pieces) != want or ", ".join(pieces) != args:
+    # only the count can be wrong: ", ".join(split) == args by construction, so no round-trip check
+    if len(pieces) != want:
         raise Ltp3Error(
             UNPARSEABLE_ARGS,
             f"<{tag}> expects {want} fields, got {len(pieces)} in {args!r}",

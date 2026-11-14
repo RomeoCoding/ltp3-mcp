@@ -1,5 +1,8 @@
 """Number formatting and parsing that matches the .NET double text the app writes.
 
+The app runs on .NET Framework 4 (CLR 4.0.30319), where `Double.ToString()` keeps 15 significant
+digits (not the shortest round-trip form of .NET Core 3.0+).
+
 Examples: 5.0 -> "5", 1e-05 -> "1E-05", 5.5e-05 -> "5.5E-05", 0.0001 -> "0.0001".
 """
 
@@ -19,7 +22,11 @@ _NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?
 
 
 def fmt(value: float) -> str:
-    """Format like .NET `double.ToString()`: shortest round-trip digits, `E+XX`/`E-XX` exponents."""
+    """Format like .NET Framework 4 `double.ToString()`: 15 significant digits, trailing zeros
+    stripped, `E+XX`/`E-XX` exponents."""
+    # bool is an int subclass; True would silently become "True"/1, which is never a number here
+    if isinstance(value, bool):
+        raise Ltp3Error(BAD_VALUE, f"not a number: {value!r}")
     if isinstance(value, int):
         return str(value)
     if math.isnan(value):
@@ -27,10 +34,10 @@ def fmt(value: float) -> str:
     if math.isinf(value):
         return "Infinity" if value > 0 else "-Infinity"
     if value == 0:
-        return "-0" if math.copysign(1.0, value) < 0 else "0"
+        return "0"  # .NET Framework prints negative zero as "0"
     sign = "-" if value < 0 else ""
-    # repr() yields the shortest digit string that round-trips, as .NET Core 3.0+ does
-    _, digit_tuple, exp = Decimal(repr(abs(value))).as_tuple()
+    # 15 significant digits (1 + 14 after the point), correctly rounded: what .NET Framework 4 keeps
+    _, digit_tuple, exp = Decimal(f"{abs(value):.14e}").as_tuple()
     assert isinstance(exp, int)  # finite values only
     all_digits = "".join(map(str, digit_tuple))
     sci_exp = len(all_digits) + exp - 1
