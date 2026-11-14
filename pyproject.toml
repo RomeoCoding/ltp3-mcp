@@ -20,6 +20,8 @@ dev = [
     "hypothesis==6.170.15",
     "ruff==0.17.5",
     "mypy==2.4.1",
+    # test_export validates against a JSON schema; pinned so it never depends on mcp's transitive deps
+    "jsonschema==4.26.0",
 ]
 
 [tool.hatch.build.targets.wheel]

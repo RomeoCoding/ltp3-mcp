@@ -12,3 +12,6 @@ __pycache__/
 .coverage
 dist/
 *.egg-info/
+
+# agent worktrees and local Claude state
+.claude/
